@@ -13,7 +13,7 @@ impl Converter for CopyConverter {
     }
 
     fn operations(&self, _mime: &str) -> Vec<Operation> {
-        vec![Operation { id: "copy".into(), label: "Duplicate".into(), icon: "Copy".into() }]
+        vec![Operation::new("copy", "Duplicate", "Copy")]
     }
 
     fn run(&self, _op: &Operation, inputs: &[PathBuf], _options: &Options) -> Result<Vec<PathBuf>> {

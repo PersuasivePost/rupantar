@@ -26,6 +26,15 @@ pub struct Operation {
     pub label: String,
     /// lucide-react icon name.
     pub icon: String,
+    /// Sub-options (e.g. Resize -> 50% / 25%); shown as an outer ring in the menu.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub children: Vec<Operation>,
+}
+
+impl Operation {
+    pub fn new(id: &str, label: &str, icon: &str) -> Self {
+        Self { id: id.into(), label: label.into(), icon: icon.into(), children: Vec::new() }
+    }
 }
 
 pub type Options = HashMap<String, String>;
@@ -132,7 +141,7 @@ mod tests {
     #[test]
     fn run_rejects_unsupported_mime() {
         let r = Registry::new();
-        let op = Operation { id: "copy".into(), label: "Copy".into(), icon: "Copy".into() };
+        let op = Operation::new("copy", "Copy", "Copy");
         let err = r.run("text/plain", &op, &[], &Options::new()).unwrap_err();
         assert!(matches!(err, EngineError::Unsupported(_)));
     }

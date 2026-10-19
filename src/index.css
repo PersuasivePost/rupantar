@@ -1,5 +1,65 @@
 @import "tailwindcss";
 
+/* Theme tokens. Dark is the default; light applies via the playground toggle or the OS setting. */
+:root {
+  color-scheme: dark;
+  --bg: #0b0d12;
+  --bg-glow: rgba(99, 102, 241, 0.16);
+  --text: #eef0f6;
+  --text-dim: rgba(238, 240, 246, 0.62);
+  --scrim: rgba(4, 6, 12, 0.38);
+  --ring-bg: rgba(28, 31, 44, 0.46);
+  --disc-bg: rgba(22, 25, 36, 0.62);
+  --wedge-fill: rgba(255, 255, 255, 0.05);
+  --stroke-a: rgba(255, 255, 255, 0.55);
+  --stroke-b: rgba(255, 255, 255, 0.05);
+  --accent: #818cf8;
+  --accent-2: #22d3ee;
+  --track: rgba(255, 255, 255, 0.12);
+  --panel: rgba(255, 255, 255, 0.05);
+  --panel-border: rgba(255, 255, 255, 0.1);
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #eef0f6;
+  --bg-glow: rgba(99, 102, 241, 0.14);
+  --text: #171a24;
+  --text-dim: rgba(23, 26, 36, 0.62);
+  --scrim: rgba(240, 242, 250, 0.45);
+  --ring-bg: rgba(255, 255, 255, 0.52);
+  --disc-bg: rgba(255, 255, 255, 0.72);
+  --wedge-fill: rgba(255, 255, 255, 0.35);
+  --stroke-a: rgba(255, 255, 255, 0.95);
+  --stroke-b: rgba(99, 102, 241, 0.18);
+  --accent: #6366f1;
+  --accent-2: #0891b2;
+  --track: rgba(23, 26, 36, 0.1);
+  --panel: rgba(255, 255, 255, 0.6);
+  --panel-border: rgba(23, 26, 36, 0.1);
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) {
+    color-scheme: light;
+    --bg: #eef0f6;
+    --bg-glow: rgba(99, 102, 241, 0.14);
+    --text: #171a24;
+    --text-dim: rgba(23, 26, 36, 0.62);
+    --scrim: rgba(240, 242, 250, 0.45);
+    --ring-bg: rgba(255, 255, 255, 0.52);
+    --disc-bg: rgba(255, 255, 255, 0.72);
+    --wedge-fill: rgba(255, 255, 255, 0.35);
+    --stroke-a: rgba(255, 255, 255, 0.95);
+    --stroke-b: rgba(99, 102, 241, 0.18);
+    --accent: #6366f1;
+    --accent-2: #0891b2;
+    --track: rgba(23, 26, 36, 0.1);
+    --panel: rgba(255, 255, 255, 0.6);
+    --panel-border: rgba(23, 26, 36, 0.1);
+  }
+}
+
 html,
 body,
 #root {
@@ -8,7 +68,21 @@ body,
 
 body {
   margin: 0;
-  background: #0f1115;
-  color: #e6e8ee;
-  font-family: system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* 1.5px gradient border: paint a gradient, then mask out everything but the border box. */
+.grad-border {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  border: 1.5px solid transparent;
+  background: linear-gradient(135deg, var(--stroke-a), var(--stroke-b)) border-box;
+  -webkit-mask: linear-gradient(#000 0 0) padding-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) padding-box exclude, linear-gradient(#000 0 0);
+  pointer-events: none;
 }
