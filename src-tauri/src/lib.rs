@@ -40,7 +40,7 @@ pub fn run() {
 
             app.handle().plugin(tauri_plugin_global_shortcut::Builder::new().build())?;
             app.manage(shell::Shell::new());
-            app.manage(commands::Engine(Arc::new(engine::Registry::with_config(&shell::engine_config()))));
+            app.manage(commands::Engine(Arc::new(engine::Registry::with_config(&shell::engine_config(app.handle())))));
 
             let handle = app.handle();
             let saved = settings::load(handle);

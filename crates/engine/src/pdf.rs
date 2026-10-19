@@ -767,7 +767,7 @@ mod tests {
 
     // ---- images -> PDF ----------------------------------------------------------------
 
-    fn xobject<'a>(doc: &'a Document, page: ObjectId) -> &'a Stream {
+    fn xobject(doc: &Document, page: ObjectId) -> &Stream {
         let res = doc.get_dictionary(page).unwrap().get(b"Resources").unwrap().as_dict().unwrap();
         let id = res.get(b"XObject").unwrap().as_dict().unwrap().get(b"Im0").unwrap().as_reference().unwrap();
         doc.get_object(id).unwrap().as_stream().unwrap()

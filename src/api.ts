@@ -34,7 +34,7 @@ export async function runOperation(op: Operation, inputs: string[], options: Opt
 }
 
 // ---- Mocks --------------------------------------------------------------------------------
-// Per-type operations are the engine's own, from src/generated/engine-operations.json
+// Operations, batch ones included, are the engine's own, from src/generated/engine-operations.json
 // (written by `UPDATE_SNAPSHOT=1 cargo test -p engine`, which fails when it is stale).
 
 export interface MockTools {
@@ -54,45 +54,21 @@ const op = (id: string, label: string, icon: string, children?: Operation[]): Op
   id, label, icon, ...(children && { children }),
 });
 
-const rotations = (base: string) => [
-  op(`${base}.90`, "90\u00b0 CW", "RotateCw"),
-  op(`${base}.270`, "90\u00b0 CCW", "RotateCcw"),
-  op(`${base}.180`, "180\u00b0", "RotateCw"),
-];
-const dpis = (base: string) => [
-  op(`${base}.72`, "72 DPI", "Monitor"),
-  op(`${base}.150`, "150 DPI", "Gauge"),
-  op(`${base}.300`, "300 DPI", "Printer"),
-];
-
-// Planned: the engine has no PDF converter yet, so these only exist in mock mode. Ids follow
-// the engine scheme (`pdf.<action>.<value>`; `options` will be able to override the value).
-const PLANNED_PDF: Operation[] = [
-  op("pdf.split", "Split", "Scissors"),
-  op("pdf.extract", "Extract", "FileOutput", [
-    op("pdf.extract.1", "Page 1", "FileDigit"),
-    op("pdf.extract.1-3", "Pages 1\u20133", "Files"),
-    op("pdf.extract.odd", "Odd", "ListOrdered"),
-    op("pdf.extract.even", "Even", "ListOrdered"),
-  ]),
-  op("pdf.rotate", "Rotate", "RotateCw", rotations("pdf.rotate")),
-  op("pdf.to_png", "PNG", "FileImage", dpis("pdf.to_png")),
-  op("pdf.to_jpg", "JPG", "FileImage", dpis("pdf.to_jpg")),
-];
-
 const IMAGE_MIMES: string[] = [MIME.png, MIME.jpeg, MIME.webp];
 
-/** Mirrors `Converter::batch_operations` of the (planned) PDF converter. */
+/**
+ * Mirrors `PdfConverter::batch_operations`: the rule for which selections get a batch op is
+ * here, the operations themselves come from the snapshot's representative selections.
+ */
 function mockBatchOperations(mimes: string[]): Operation[] {
-  const out: Operation[] = [];
-  if (mimes.length >= 2 && mimes.every((m) => m === MIME.pdf)) out.push(op("pdf.merge", "Merge PDFs", "Merge"));
-  if (mimes.length && mimes.every((m) => IMAGE_MIMES.includes(m))) {
-    out.push(op("pdf.from_images", mimes.length > 1 ? "Images \u2192 PDF" : "Image \u2192 PDF", "FileText", [
-      op("pdf.from_images.a4", "Fit A4", "RectangleVertical"),
-      op("pdf.from_images.original", "Original size", "Scaling"),
-    ]));
+  const batch = ENGINE.batch;
+  if (mimes.length >= 2 && mimes.every((m) => m === MIME.pdf)) {
+    return withAvailability(batch[`${MIME.pdf},${MIME.pdf}`] ?? []);
   }
-  return withAvailability(out);
+  if (mimes.length && mimes.every((m) => IMAGE_MIMES.includes(m))) {
+    return withAvailability(batch[mimes.length > 1 ? `${MIME.png},${MIME.jpeg}` : MIME.png] ?? []);
+  }
+  return [];
 }
 
 /** Eight plain wedges, for checking the fullest layout in the playground. */
@@ -101,12 +77,16 @@ const LAYOUT_TEST: Operation[] = [
   ["Merge PDFs", "Merge"], ["Images \u2192 PDF", "FileText"], ["Markdown", "FileCode"], ["Duplicate", "Copy"],
 ].map(([label, icon], i) => op(`layout.${i}`, label, icon));
 
-const ENGINE = ENGINE_OPERATIONS as Record<string, Operation[]>;
+const ENGINE = ENGINE_OPERATIONS as {
+  /** Per mime. */
+  operations: Record<string, Operation[]>;
+  /** Per representative selection, keyed by its mimes joined with ",". */
+  batch: Record<string, Operation[]>;
+};
 
 function mockOperations(mime: string): Operation[] {
   if (mime === LAYOUT_TEST_MIME) return LAYOUT_TEST;
-  const engine = ENGINE[mime] ?? ENGINE[MIME.unknown];
-  return withAvailability(mime === MIME.pdf ? [...PLANNED_PDF, ...engine] : engine);
+  return withAvailability(ENGINE.operations[mime] ?? ENGINE.operations[MIME.unknown]);
 }
 
 /** Marks operations unavailable the way the engine does when a tool is missing. */

@@ -50,6 +50,7 @@
     "active": true,
     "targets": "all",
     "icon": ["icons/icon.png"],
-    "externalBin": ["binaries/pandoc", "binaries/typst"]
+    "externalBin": ["binaries/pandoc", "binaries/typst"],
+    "resources": { "resources/pdfium/": "pdfium/" }
   }
 }

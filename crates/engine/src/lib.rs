@@ -337,14 +337,19 @@ mod tests {
     fn selections_offer_what_every_type_offers() {
         let r = Registry::with_defaults();
         let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
-        assert_eq!(r.operations_for(&s(&["image/png"])), r.operations("image/png"));
-        assert_eq!(r.operations_for(&s(&["image/png", "image/png"])), r.operations("image/png"));
+        // Images always get the batch "Image(s) -> PDF" first, then the per-type ops.
+        let one = r.operations_for(&s(&["image/png"]));
+        assert_eq!(one[0].id, "pdf.from_images");
+        assert_eq!(one[1..], r.operations("image/png"));
+        assert_eq!(r.operations_for(&s(&["image/png", "image/png"]))[1..], r.operations("image/png"));
+        assert_eq!(ids(&r.operations_for(&s(&[mime::PDF]))), ids(&r.operations(mime::PDF)), "merge needs two");
+        assert_eq!(ids(&r.operations_for(&s(&[mime::PDF, mime::PDF])))[0], "pdf.merge");
 
         // PNG converts to JPG/WebP, JPEG to PNG/WebP: together only WebP is valid for both.
         let mixed = r.operations_for(&s(&["image/png", "image/jpeg"]));
-        assert_eq!(ids(&mixed), ["image.convert", "image.resize", "image.compress", "image.rotate", "copy"]);
-        assert_eq!(ids(&mixed[0].children), ["image.convert.webp"]);
-        assert_eq!(mixed[1].children, r.operations("image/png")[1].children);
+        assert_eq!(ids(&mixed), ["pdf.from_images", "image.convert", "image.resize", "image.compress", "image.rotate", "copy"]);
+        assert_eq!(ids(&mixed[1].children), ["image.convert.webp"]);
+        assert_eq!(mixed[2].children, r.operations("image/png")[1].children);
 
         assert_eq!(ids(&r.operations_for(&s(&["image/png", mime::CSV]))), ["copy"]);
         assert!(r.operations_for(&[]).is_empty());
