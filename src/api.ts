@@ -14,13 +14,17 @@ export interface Operation {
   icon: string;
   /** Sub-options (e.g. Resize -> 50% / 25%); shown as an outer ring. */
   children?: Operation[];
-  /** False when a required tool (pandoc, typst) is missing; the menu doesn't render it. Absent = true. */
+  /** False when a required tool is missing or the op is only planned; the menu hides it. Absent = true. */
   available?: boolean;
+  /** Menu position for this selection, lower first (top level only). The engine already sorts by it. */
+  priority?: number;
+  /** What the op does (convert, optimize, pages, edit, extract, data, security, file). */
+  group?: string;
 }
 
 export type Options = Record<string, string>;
 
-/** Operations for a selection: `mimes` has one entry per file (batch ops like "Merge PDFs" included). */
+/** Operations for a selection, in menu order: `mimes` has one entry per file (batch ops like "Merge" included). */
 export async function listOperations(mimes: string[]): Promise<Operation[]> {
   if (isTauri()) return invoke<Operation[]>("list_operations", { mimes });
   return operationsFor(mimes, mockOperations, mockBatchOperations);
@@ -50,6 +54,13 @@ export function setMockTools(tools: MockTools): void {
   mockTools = { ...tools };
 }
 
+let showPlanned = false;
+
+/** Playground: treat planned (not yet implemented) operations as available, to preview full menus. */
+export function setShowPlanned(show: boolean): void {
+  showPlanned = show;
+}
+
 const op = (id: string, label: string, icon: string, children?: Operation[]): Operation => ({
   id, label, icon, ...(children && { children }),
 });
@@ -71,11 +82,16 @@ function mockBatchOperations(mimes: string[]): Operation[] {
   return [];
 }
 
-/** Eight plain wedges, for checking the fullest layout in the playground. */
+/** Twenty operations (one with sub-options), for checking the paged More ring in the playground. */
 const LAYOUT_TEST: Operation[] = [
-  ["Convert", "FileImage"], ["Resize", "Maximize2"], ["Compress", "Minimize2"], ["Rotate", "RotateCw"],
-  ["Merge PDFs", "Merge"], ["Images \u2192 PDF", "FileText"], ["Markdown", "FileCode"], ["Duplicate", "Copy"],
-].map(([label, icon], i) => op(`layout.${i}`, label, icon));
+  ["Compress", "Minimize2"], ["To Word", "FileType"], ["To image", "FileImage"], ["Split", "Scissors"],
+  ["Rotate", "RotateCw"], ["Extract", "FileOutput"], ["To PowerPoint", "Presentation"], ["To Excel", "FileSpreadsheet"],
+  ["To text", "Text"], ["Watermark", "Stamp"], ["Page numbers", "Hash"], ["Protect / unlock", "Lock"],
+  ["OCR", "ScanText"], ["Merge", "Merge"], ["To Markdown", "FileCode"], ["To HTML", "Globe"],
+  ["To EPUB", "BookOpen"], ["Strip metadata", "EyeOff"], ["Upscale", "ZoomIn"], ["Duplicate", "Copy"],
+].map(([label, icon], i) =>
+  op(`layout.${i}`, label, icon, i === 5 ? [op("layout.5.a", "Page 1", "FileDigit"), op("layout.5.b", "Odd", "ListOrdered"), op("layout.5.c", "Even", "ListOrdered")] : undefined),
+);
 
 const ENGINE = ENGINE_OPERATIONS as {
   /** Per mime. */
@@ -94,10 +110,11 @@ function withAvailability(ops: Operation[]): Operation[] {
   const needs = (id: string) =>
     (id.startsWith("doc.") && !mockTools.pandoc) ||
     (id === "doc.to_pdf" && !mockTools.typst) ||
-    (/^pdf\.to_(png|jpg)/.test(id) && !mockTools.pdfium);
+    (/^pdf\.to_(image|png|jpg)/.test(id) && !mockTools.pdfium);
+  // The snapshot is taken with every tool present, so `available: false` there means planned.
   return ops.map((o) => ({
     ...o,
-    available: o.available !== false && !needs(o.id),
+    available: (showPlanned || o.available !== false) && !needs(o.id),
     ...(o.children && { children: withAvailability(o.children) }),
   }));
 }

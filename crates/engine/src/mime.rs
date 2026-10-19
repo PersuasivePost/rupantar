@@ -10,6 +10,11 @@ pub const XLS: &str = "application/vnd.ms-excel";
 pub const ODS: &str = "application/vnd.oasis.opendocument.spreadsheet";
 pub const CSV: &str = "text/csv";
 pub const DOCX: &str = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+pub const DOC: &str = "application/msword";
+pub const ODT: &str = "application/vnd.oasis.opendocument.text";
+pub const PPTX: &str = "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+pub const PPT: &str = "application/vnd.ms-powerpoint";
+pub const ODP: &str = "application/vnd.oasis.opendocument.presentation";
 pub const MARKDOWN: &str = "text/markdown";
 pub const HTML: &str = "text/html";
 pub const PDF: &str = "application/pdf";
@@ -22,6 +27,11 @@ const BY_EXTENSION: &[(&str, &str)] = &[
     ("gif", "image/gif"),
     ("pdf", PDF),
     ("docx", DOCX),
+    ("doc", DOC),
+    ("odt", ODT),
+    ("pptx", PPTX),
+    ("ppt", PPT),
+    ("odp", ODP),
     ("xlsx", XLSX),
     ("xls", XLS),
     ("ods", ODS),
@@ -85,6 +95,9 @@ mod tests {
         assert_eq!(detect(&file(d.path(), "a.PDF", b"")), "application/pdf");
         assert_eq!(detect(&file(d.path(), "b.md", b"# hi")), "text/markdown");
         assert!(detect(&file(d.path(), "c.docx", b"PK")).ends_with("wordprocessingml.document"));
+        for (name, mime) in [("d.doc", DOC), ("e.ODT", ODT), ("f.pptx", PPTX), ("g.ppt", PPT), ("h.odp", ODP)] {
+            assert_eq!(detect(&file(d.path(), name, b"")), mime, "{name}");
+        }
     }
 
     #[test]

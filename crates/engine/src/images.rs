@@ -18,7 +18,7 @@ use image::codecs::webp::WebPEncoder;
 use image::imageops::FilterType;
 use image::{DynamicImage, ExtendedColorType, ImageFormat, ImageReader, RgbImage};
 
-use crate::{create_unique_sibling, Converter, EngineError, Operation, Options, Result};
+use crate::{catalog, create_unique_sibling, Converter, EngineError, Operation, Options, Result};
 
 const JPEG_DEFAULT_QUALITY: u8 = 90;
 const COMPRESS_DEFAULT_QUALITY: u8 = 70;
@@ -268,19 +268,19 @@ impl Converter for ImageConverter {
             .map(|(ext, label, icon)| Operation::new(&format!("image.convert.{ext}"), label, icon))
             .collect();
         vec![
-            Operation::new("image.convert", "Convert", "FileImage").with_children(convert),
-            Operation::new("image.resize", "Resize", "Maximize2").with_children(vec![
+            catalog::op("image.convert").with_children(convert),
+            catalog::op("image.resize").with_children(vec![
                 Operation::new("image.resize.pct.50", "50%", "Percent"),
                 Operation::new("image.resize.pct.25", "25%", "Percent"),
                 Operation::new("image.resize.max.1920", "Max 1920", "Maximize2"),
                 Operation::new("image.resize.max.1080", "Max 1080", "Maximize2"),
             ]),
-            Operation::new("image.compress", "Compress", "Minimize2").with_children(vec![
+            catalog::op("image.compress").with_children(vec![
                 Operation::new("image.compress.85", "Light", "Feather"),
                 Operation::new("image.compress.70", "Balanced", "Gauge"),
                 Operation::new("image.compress.40", "Smallest", "Minimize2"),
             ]),
-            Operation::new("image.rotate", "Rotate", "RotateCw").with_children(vec![
+            catalog::op("image.rotate").with_children(vec![
                 Operation::new("image.rotate.90", "90\u{b0} CW", "RotateCw"),
                 Operation::new("image.rotate.270", "90\u{b0} CCW", "RotateCcw"),
                 Operation::new("image.rotate.180", "180\u{b0}", "RotateCw"),
@@ -551,7 +551,8 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let png = write_fixture(d.path(), "pic.png", &two_tone());
         let reg = crate::Registry::with_defaults();
-        for parent in reg.operations("image/png") {
+        // Planned entries (listed unavailable, hidden by the menu) have nothing to run yet.
+        for parent in reg.operations("image/png").into_iter().filter(|o| o.available) {
             let leaves = if parent.children.is_empty() { vec![parent.clone()] } else { parent.children.clone() };
             for op in leaves {
                 let out = reg.run("image/png", &op, &[png.clone()], &Options::new());

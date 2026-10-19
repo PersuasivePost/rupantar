@@ -23,7 +23,7 @@ use calamine::{open_workbook_auto, Data, ExcelDateTime, Range, Reader, SheetType
 use rust_xlsxwriter::{Format, Workbook};
 
 use crate::mime::{CSV, ODS, XLS, XLSX};
-use crate::{create_unique, create_unique_sibling, write_all_or_nothing, Converter, EngineError, Operation, Options, Result};
+use crate::{catalog, create_unique, create_unique_sibling, write_all_or_nothing, Converter, EngineError, Operation, Options, Result};
 
 pub struct SheetConverter;
 
@@ -37,12 +37,12 @@ const DELIMITERS: [(&str, u8, &str, &str); 3] = [
 ];
 
 /// `base` + one child per delimiter.
-fn with_delimiters(base: &str, label: &str, icon: &str) -> Operation {
+fn with_delimiters(base: &str) -> Operation {
     let children = DELIMITERS
         .iter()
         .map(|(suffix, _, label, icon)| Operation::new(&format!("{base}.{suffix}"), label, icon))
         .collect();
-    Operation::new(base, label, icon).with_children(children)
+    catalog::op(base).with_children(children)
 }
 
 /// The delimiter for an op id under `base`: from `options`, else the id suffix, else a comma.
@@ -246,9 +246,9 @@ impl Converter for SheetConverter {
 
     fn operations(&self, mime: &str) -> Vec<Operation> {
         if is_workbook(mime) {
-            vec![with_delimiters(TO_CSV, "CSV", "FileText")]
+            vec![with_delimiters(TO_CSV)]
         } else if mime == CSV {
-            vec![with_delimiters(TO_XLSX, "XLSX", "FileSpreadsheet")]
+            vec![with_delimiters(TO_XLSX)]
         } else {
             Vec::new()
         }

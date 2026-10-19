@@ -6,7 +6,7 @@ import {
 import { X, type LucideIcon } from "lucide-react";
 import type { Operation } from "../api";
 import { fileIcon, iconFor } from "../icons";
-import { visibleOperations } from "../lib/operations";
+import { MORE_ID, RING_SLOTS, menuWedges, ringPage, visibleOperations, type Slot } from "../lib/operations";
 import { TAU, angleFromUp, pickInSpan, pickWedge, polar, sectorPath } from "../lib/radial";
 
 // Geometry (px). Everything is laid out once in a SIZE x SIZE box centered on the cursor;
@@ -20,6 +20,10 @@ const S_IN = 178;
 const S_OUT = 240;
 const DEAD = 34;
 const GAP = 3;
+/** Slot width in the More ring: eight fill the circle. */
+const MORE_SLOT = TAU / RING_SLOTS;
+/** Minimum slot width for a wedge's sub-options; the arc grows past the wedge to fit them. */
+const SUB_SLOT = TAU / 15;
 
 type Phase = "choosing" | "running" | "done" | "error";
 
@@ -30,11 +34,27 @@ interface Selection {
   dismiss: boolean;
 }
 
+/** The outer ring: one page of the expanded wedge's sub-options, or of "More". */
+interface Ring {
+  slots: Slot[];
+  page: number;
+  pages: number;
+  start: number;
+  span: number;
+  /** Passed to `onConfirm` as the parent; none for More's own items (they are top level). */
+  owner?: Operation;
+  /** More's items: those with sub-options open them in place of the ring. */
+  drillable: boolean;
+}
+
 export interface RadialMenuProps {
   /** Cursor position; the menu is centered here (clamped to stay on screen). */
   origin: { x: number; y: number };
   file: { name: string; mime: string };
-  /** Up to 8 operations for this selection. Unavailable ones (missing tools) are not rendered. */
+  /**
+   * Operations for this selection, in menu order. Unavailable ones (missing tools, planned) are
+   * not rendered; past six, the first five are wedges and the rest go in a "More" ring.
+   */
   operations: Operation[];
   /** Runs the chosen operation; `parent` is set when it came from the sub ring. */
   onConfirm: (op: Operation, parent?: Operation) => Promise<unknown>;
@@ -53,7 +73,7 @@ const spring = { type: "spring", stiffness: 420, damping: 28, mass: 0.8 } as con
 export function RadialMenu({ origin, file, operations: all, onConfirm, onDismiss, onDone, scrim = true }: RadialMenuProps) {
   const reduced = !!useReducedMotion();
   const uid = useId().replace(/:/g, "");
-  const operations = useMemo(() => visibleOperations(all), [all]);
+  const operations = useMemo(() => menuWedges(visibleOperations(all)), [all]);
   const n = operations.length;
   const step = TAU / n;
 
@@ -68,12 +88,16 @@ export function RadialMenu({ origin, file, operations: all, onConfirm, onDismiss
   const [hi, setHi] = useState<number | null>(null);
   const [sub, setSub] = useState<number | null>(null);
   const [expanded, setExpanded] = useState<number | null>(null);
+  /** Index of the More item whose sub-options replace the More ring. */
+  const [drill, setDrill] = useState<number | null>(null);
+  const [page, setPage] = useState(0);
   const [phase, setPhase] = useState<Phase>("choosing");
   const [chosen, setChosen] = useState("");
 
   // Handlers read the latest state through a ref so they never act on stale closures.
-  const latest = useRef({ hi, sub, expanded, phase });
-  latest.current = { hi, sub, expanded, phase };
+  const latest = useRef({ hi, sub, expanded, drill, page, phase });
+  latest.current = { hi, sub, expanded, drill, page, phase };
+  const lastWheel = useRef(0);
   const timers = useRef<number[]>([]);
   useEffect(() => () => timers.current.forEach(clearTimeout), []);
   useEffect(() => {
@@ -84,8 +108,25 @@ export function RadialMenu({ origin, file, operations: all, onConfirm, onDismiss
   const aimX = useSpring(0, { stiffness: 500, damping: 34 });
   const aimY = useSpring(0, { stiffness: 500, damping: 34 });
 
+  const ringFor = useCallback(
+    (exp: number | null, drilled: number | null, pg: number): Ring | null => {
+      if (exp === null) return null;
+      const parent = operations[exp];
+      const more = parent.id === MORE_ID;
+      const kids = parent.children ?? [];
+      const inner = more && drilled !== null ? kids[drilled] : undefined;
+      const { slots, page: p, pages } = ringPage(inner ? inner.children ?? [] : kids, pg, !!inner);
+      const span = Math.min(TAU, Math.max(more ? 0 : step, slots.length * (more ? MORE_SLOT : SUB_SLOT)));
+      // An arc is centered on its wedge; a full circle starts at the wedge and runs clockwise.
+      const start = exp * step - (span < TAU ? span : span / slots.length) / 2;
+      return { slots, page: p, pages, span, start, owner: more ? inner : parent, drillable: more && !inner };
+    },
+    [operations, step],
+  );
+
   const resolve = useCallback(
-    (x: number, y: number, exp: number | null): Selection => {
+    (x: number, y: number): Selection => {
+      const { expanded: exp, drill: dr, page: pg } = latest.current;
       const dx = x - center.x;
       const dy = y - center.y;
       const dist = Math.hypot(dx, dy);
@@ -94,25 +135,39 @@ export function RadialMenu({ origin, file, operations: all, onConfirm, onDismiss
       }
       if (dist < DEAD) return { hi: null, sub: null, expanded: exp, dismiss: false };
       const a = angleFromUp(dx, dy);
-      if (exp !== null && dist > R_OUT + 4) {
-        const kids = operations[exp].children ?? [];
-        return { hi: exp, sub: pickInSpan(a, exp * step - step / 2, step, kids.length), expanded: exp, dismiss: false };
+      const ring = ringFor(exp, dr, pg);
+      if (ring && dist > R_OUT + 4) {
+        return { hi: exp, sub: pickInSpan(a, ring.start, ring.span, ring.slots.length), expanded: exp, dismiss: false };
       }
       const h = pickWedge(a, n);
       return { hi: h, sub: null, expanded: h === exp ? exp : null, dismiss: false };
     },
-    [center, n, operations, step],
+    [center, n, ringFor],
   );
+
+  /** Opens (or closes, with null) a wedge's ring, starting from its first page. */
+  const expand = useCallback((exp: number | null) => {
+    setExpanded(exp);
+    setDrill(null);
+    setPage(0);
+    setSub(null);
+  }, []);
 
   const apply = useCallback(
     (s: Selection) => {
       if (s.dismiss) return onDismiss();
+      if (s.expanded !== latest.current.expanded) expand(s.expanded);
       setHi(s.hi);
       setSub(s.sub);
-      setExpanded(s.expanded);
     },
-    [onDismiss],
+    [expand, onDismiss],
   );
+
+  /** Turns to page `to` and keeps the page control under the pointer for repeated turns. */
+  const turnPage = useCallback((to: number, ring: Ring) => {
+    setPage(to);
+    setSub(ring.slots.findIndex((sl) => sl.kind === "page"));
+  }, []);
 
   const confirm = useCallback(
     async (op: Operation, parent?: Operation) => {
@@ -141,20 +196,34 @@ export function RadialMenu({ origin, file, operations: all, onConfirm, onDismiss
     (s: Selection) => {
       if (s.dismiss || s.hi === null) return onDismiss();
       const op = operations[s.hi];
-      if (s.sub !== null) return void confirm(op.children![s.sub], op);
-      if (op.children?.length) {
-        setExpanded(s.hi);
-        setSub(null);
-        return;
+      if (s.sub !== null) {
+        const ring = ringFor(s.expanded, latest.current.drill, latest.current.page);
+        const slot = ring?.slots[s.sub];
+        if (!ring || !slot || slot.kind === "empty") return;
+        if (slot.kind === "page") return turnPage(slot.to, ring);
+        if (slot.kind === "back") {
+          setDrill(null);
+          setPage(0);
+          setSub(null);
+          return;
+        }
+        if (ring.drillable && slot.op.children?.length) {
+          setDrill(op.children!.indexOf(slot.op));
+          setPage(0);
+          setSub(null);
+          return;
+        }
+        return void confirm(slot.op, ring.owner);
       }
+      if (op.children?.length) return expand(s.hi);
       void confirm(op);
     },
-    [confirm, onDismiss, operations],
+    [confirm, expand, onDismiss, operations, ringFor, turnPage],
   );
 
   const onPointerMove = (e: React.PointerEvent) => {
     if (latest.current.phase !== "choosing") return;
-    const s = resolve(e.clientX, e.clientY, latest.current.expanded);
+    const s = resolve(e.clientX, e.clientY);
     apply(s);
     const aimed = s.hi !== null && !s.dismiss;
     const p = polar(R_DISC + 9, angleFromUp(e.clientX - center.x, e.clientY - center.y));
@@ -165,38 +234,52 @@ export function RadialMenu({ origin, file, operations: all, onConfirm, onDismiss
   const onClick = (e: React.MouseEvent) => {
     e.stopPropagation(); // the click that confirms must not reach the page underneath and reopen the menu
     if (latest.current.phase !== "choosing") return;
-    activate(resolve(e.clientX, e.clientY, latest.current.expanded));
+    activate(resolve(e.clientX, e.clientY));
+  };
+
+  // The wheel pages a paged ring (throttled: trackpads send bursts).
+  const onWheel = (e: React.WheelEvent) => {
+    const { expanded: exp, drill: dr, page: pg, phase: ph } = latest.current;
+    const ring = ringFor(exp, dr, pg);
+    if (ph !== "choosing" || !ring || ring.pages < 2 || !e.deltaY || e.timeStamp - lastWheel.current < 250) return;
+    lastWheel.current = e.timeStamp;
+    setPage(ring.page + Math.sign(e.deltaY));
   };
 
   // Keyboard: arrows move the highlight, Enter confirms, Esc steps back or dismisses.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const { hi: h, sub: s, expanded: exp, phase: ph } = latest.current;
+      const { hi: h, sub: s, expanded: exp, drill: dr, page: pg, phase: ph } = latest.current;
       if (ph !== "choosing") return;
       const dir = e.key === "ArrowRight" || e.key === "ArrowDown" ? 1 : e.key === "ArrowLeft" || e.key === "ArrowUp" ? -1 : 0;
+      const ring = ringFor(exp, dr, pg);
       if (dir) {
         e.preventDefault();
-        if (exp !== null && h === exp) {
-          const k = operations[exp].children!.length;
-          setSub((((s ?? (dir > 0 ? -1 : 0)) + dir) % k + k) % k);
+        if (ring && h === exp) {
+          const k = ring.slots.length;
+          let j = s ?? (dir > 0 ? -1 : 0);
+          do j = (((j + dir) % k) + k) % k;
+          while (ring.slots[j].kind === "empty");
+          setSub(j);
         } else {
           setHi((((h ?? (dir > 0 ? -1 : 0)) + dir) % n + n) % n);
-          setSub(null);
-          setExpanded(null);
+          expand(null);
         }
       } else if (e.key === "Enter") {
         e.preventDefault();
         activate({ hi: h, sub: s, expanded: exp, dismiss: false });
       } else if (e.key === "Escape" || e.key === "Backspace") {
-        if (exp !== null) {
-          setExpanded(null);
+        if (dr !== null) {
+          setDrill(null);
+          setPage(0);
           setSub(null);
-        } else if (e.key === "Escape") onDismiss();
+        } else if (exp !== null) expand(null);
+        else if (e.key === "Escape") onDismiss();
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [activate, n, onDismiss, operations]);
+  }, [activate, expand, n, onDismiss, ringFor]);
 
   // ---- variants -----------------------------------------------------------------------------
   // Reduced motion keeps the same states but swaps spring/scale for short opacity fades.
@@ -248,9 +331,11 @@ export function RadialMenu({ origin, file, operations: all, onConfirm, onDismiss
   };
 
   const FileIcon = fileIcon(file.mime);
-  const subOps = expanded !== null ? operations[expanded].children ?? [] : [];
-  const activeOp = sub !== null && expanded !== null ? subOps[sub] : hi !== null ? operations[hi] : null;
-  const subStart = expanded !== null ? expanded * step - step / 2 : 0;
+  const ring = ringFor(expanded, drill, page);
+  const slot = ring && sub !== null ? ring.slots[sub] : undefined;
+  const activeOp = slot ? (slot.kind === "empty" ? null : slot.op) : hi !== null ? operations[hi] : null;
+  // "click for more": a wedge whose ring isn't open yet, or a More item with sub-options.
+  const opensMore = !!activeOp?.children?.length && (slot ? slot.kind === "op" && !!ring?.drillable : expanded !== hi);
 
   return (
     <motion.div
@@ -263,6 +348,7 @@ export function RadialMenu({ origin, file, operations: all, onConfirm, onDismiss
       exit="hidden"
       onPointerMove={onPointerMove}
       onClick={onClick}
+      onWheel={onWheel}
       onContextMenu={(e) => { e.preventDefault(); if (phase === "choosing") onDismiss(); }}
     >
       {scrim && <motion.div className="absolute inset-0" style={{ background: "var(--scrim)" }} variants={scrimV} />}
@@ -309,24 +395,25 @@ export function RadialMenu({ origin, file, operations: all, onConfirm, onDismiss
           />
         ))}
 
-        {/* Outer ring: sub-options of the expanded wedge. */}
-        <AnimatePresence>
-          {phase === "choosing" && expanded !== null && (
+        {/* Outer ring: sub-options of the expanded wedge, or a page of "More". */}
+        <AnimatePresence mode="wait">
+          {phase === "choosing" && ring && expanded !== null && (
             <motion.div
-              key={operations[expanded].id}
+              key={`${operations[expanded].id}/${drill}/${ring.page}`}
               className="absolute inset-0"
               variants={subGroupV}
               initial="hidden"
               animate="open"
               exit="hidden"
             >
-              <GlassAnnulus rIn={S_IN} rOut={S_OUT} arc={{ start: subStart, span: step }} />
-              {subOps.map((child, j) => {
-                const span = step / subOps.length;
-                const a0 = subStart + j * span;
+              <GlassAnnulus rIn={S_IN} rOut={S_OUT} arc={{ start: ring.start, span: ring.span }} />
+              {ring.slots.map((sl, j) => {
+                if (sl.kind === "empty") return null;
+                const span = ring.span / ring.slots.length;
+                const a0 = ring.start + j * span;
                 return (
                   <Segment
-                    key={child.id}
+                    key={sl.op.id}
                     uid={uid}
                     variants={subSegV}
                     custom={j}
@@ -334,9 +421,10 @@ export function RadialMenu({ origin, file, operations: all, onConfirm, onDismiss
                     angle={a0 + span / 2}
                     rMid={(S_IN + S_OUT) / 2}
                     maxWidth={Math.min(96, labelWidth((S_IN + S_OUT) / 2, span, 0.85))}
-                    label={child.label}
-                    Icon={iconFor(child.icon)}
+                    label={sl.op.label}
+                    Icon={iconFor(sl.op.icon)}
                     highlighted={sub === j}
+                    hasChildren={ring.drillable && !!sl.op.children?.length}
                     reduced={reduced}
                     small
                   />
@@ -368,7 +456,7 @@ export function RadialMenu({ origin, file, operations: all, onConfirm, onDismiss
                       initial={{ opacity: 0, y: reduced ? 0 : 4 }} animate={{ opacity: 1, y: 0 }}
                       exit={{ opacity: 0 }} transition={{ duration: 0.1 }}>
                       <span className="text-[15px] font-semibold leading-tight">{activeOp.label}</span>
-                      {activeOp.children?.length && expanded !== hi ? (
+                      {opensMore ? (
                         <span className="mt-0.5 text-[9px] uppercase tracking-wider" style={{ color: "var(--accent)" }}>click for more</span>
                       ) : (
                         <span className="mt-0.5 max-w-[78px] truncate text-[9px]" style={{ color: "var(--text-dim)" }}>{file.name}</span>

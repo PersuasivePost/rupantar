@@ -4,7 +4,7 @@
 use std::fs::File;
 use std::path::PathBuf;
 
-use crate::{create_unique_sibling, Converter, EngineError, Operation, Options, Result};
+use crate::{catalog, create_unique_sibling, Converter, EngineError, Operation, Options, Result};
 
 pub struct CopyConverter;
 
@@ -14,7 +14,7 @@ impl Converter for CopyConverter {
     }
 
     fn operations(&self, _mime: &str) -> Vec<Operation> {
-        vec![Operation::new("copy", "Duplicate", "Copy")]
+        vec![catalog::op("copy")]
     }
 
     fn run(&self, op: &Operation, inputs: &[PathBuf], _options: &Options) -> Result<Vec<PathBuf>> {

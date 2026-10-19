@@ -3,6 +3,11 @@
 export const MIME = {
   pdf: "application/pdf",
   docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  doc: "application/msword",
+  odt: "application/vnd.oasis.opendocument.text",
+  pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  ppt: "application/vnd.ms-powerpoint",
+  odp: "application/vnd.oasis.opendocument.presentation",
   md: "text/markdown",
   html: "text/html",
   png: "image/png",
@@ -15,7 +20,7 @@ export const MIME = {
   unknown: "application/octet-stream",
 } as const;
 
-/** Playground-only: a fake type whose mock lists 8 wedges, to check the fullest layout. */
+/** Playground-only: a fake type whose mock lists 20 operations, to check the paged More ring. */
 export const LAYOUT_TEST_MIME = "x-rupantar/layout-test";
 
 export interface SampleFile {
@@ -33,13 +38,15 @@ export const SAMPLE_FILES: SampleFile[] = [
   { label: "JPG", name: "Holiday.jpg", mime: MIME.jpeg },
   { label: "XLSX", name: "Budget 2026.xlsx", mime: MIME.xlsx },
   { label: "CSV", name: "Contacts.csv", mime: MIME.csv },
-  { label: "8 wedges", name: "Layout test", mime: LAYOUT_TEST_MIME },
+  { label: "PPTX", name: "Pitch deck.pptx", mime: MIME.pptx },
+  { label: "20 ops", name: "Layout test", mime: LAYOUT_TEST_MIME },
 ];
 
 const EXT_MIME: Record<string, string> = {
-  pdf: MIME.pdf, docx: MIME.docx, md: MIME.md, markdown: MIME.md, html: MIME.html, htm: MIME.html,
+  pdf: MIME.pdf, docx: MIME.docx, doc: MIME.doc, odt: MIME.odt, md: MIME.md, markdown: MIME.md, html: MIME.html, htm: MIME.html,
   png: MIME.png, jpg: MIME.jpeg, jpeg: MIME.jpeg, webp: MIME.webp,
   xlsx: MIME.xlsx, xls: MIME.xls, ods: MIME.ods, csv: MIME.csv,
+  pptx: MIME.pptx, ppt: MIME.ppt, odp: MIME.odp,
 };
 
 /** Best-effort mime for a dropped file in dev mode; falls back to the browser's guess. */

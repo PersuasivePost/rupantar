@@ -4,9 +4,11 @@
     "application/pdf,application/pdf": [
       {
         "available": true,
+        "group": "pages",
         "icon": "Merge",
         "id": "pdf.merge",
-        "label": "Merge PDFs"
+        "label": "Merge",
+        "priority": 0
       }
     ],
     "image/png": [
@@ -26,9 +28,11 @@
             "label": "Original size"
           }
         ],
+        "group": "convert",
         "icon": "FileText",
         "id": "pdf.from_images",
-        "label": "Image → PDF"
+        "label": "To PDF",
+        "priority": 80
       }
     ],
     "image/png,image/jpeg": [
@@ -48,16 +52,93 @@
             "label": "Original size"
           }
         ],
+        "group": "convert",
         "icon": "FileText",
         "id": "pdf.from_images",
-        "label": "Images → PDF"
+        "label": "To PDF",
+        "priority": 0
       }
     ]
   },
   "operations": {
+    "application/msword": [
+      {
+        "available": false,
+        "group": "convert",
+        "icon": "FileText",
+        "id": "doc.to_pdf",
+        "label": "To PDF",
+        "priority": 10
+      },
+      {
+        "available": false,
+        "group": "convert",
+        "icon": "FileCode",
+        "id": "doc.to_md",
+        "label": "To Markdown",
+        "priority": 20
+      },
+      {
+        "available": false,
+        "group": "convert",
+        "icon": "Globe",
+        "id": "doc.to_html",
+        "label": "To HTML",
+        "priority": 30
+      },
+      {
+        "available": false,
+        "group": "optimize",
+        "icon": "Minimize2",
+        "id": "doc.compress",
+        "label": "Compress",
+        "priority": 40
+      },
+      {
+        "available": false,
+        "group": "extract",
+        "icon": "Images",
+        "id": "doc.extract_images",
+        "label": "Extract images",
+        "priority": 50
+      },
+      {
+        "available": false,
+        "group": "convert",
+        "icon": "FilePen",
+        "id": "doc.to_odt",
+        "label": "To ODT",
+        "priority": 60
+      },
+      {
+        "available": false,
+        "group": "convert",
+        "icon": "BookOpen",
+        "id": "doc.to_epub",
+        "label": "To EPUB",
+        "priority": 70
+      },
+      {
+        "available": false,
+        "group": "extract",
+        "icon": "Text",
+        "id": "doc.to_text",
+        "label": "To text",
+        "priority": 80
+      },
+      {
+        "available": true,
+        "group": "file",
+        "icon": "Copy",
+        "id": "copy",
+        "label": "Duplicate",
+        "priority": 900
+      }
+    ],
     "application/octet-stream": [
       {
         "available": true,
+        "group": "file",
         "icon": "Copy",
         "id": "copy",
         "label": "Duplicate"
@@ -65,10 +146,102 @@
     ],
     "application/pdf": [
       {
+        "available": false,
+        "group": "optimize",
+        "icon": "Minimize2",
+        "id": "pdf.compress",
+        "label": "Compress",
+        "priority": 10
+      },
+      {
+        "available": false,
+        "group": "convert",
+        "icon": "FileType",
+        "id": "pdf.to_docx",
+        "label": "To Word",
+        "priority": 20
+      },
+      {
         "available": true,
+        "children": [
+          {
+            "available": true,
+            "icon": "Monitor",
+            "id": "pdf.to_png.72",
+            "label": "PNG 72 DPI"
+          },
+          {
+            "available": true,
+            "icon": "Gauge",
+            "id": "pdf.to_png.150",
+            "label": "PNG 150 DPI"
+          },
+          {
+            "available": true,
+            "icon": "Printer",
+            "id": "pdf.to_png.300",
+            "label": "PNG 300 DPI"
+          },
+          {
+            "available": true,
+            "icon": "Monitor",
+            "id": "pdf.to_jpg.72",
+            "label": "JPG 72 DPI"
+          },
+          {
+            "available": true,
+            "icon": "Gauge",
+            "id": "pdf.to_jpg.150",
+            "label": "JPG 150 DPI"
+          },
+          {
+            "available": true,
+            "icon": "Printer",
+            "id": "pdf.to_jpg.300",
+            "label": "JPG 300 DPI"
+          }
+        ],
+        "group": "convert",
+        "icon": "FileImage",
+        "id": "pdf.to_image",
+        "label": "To image",
+        "priority": 30
+      },
+      {
+        "available": true,
+        "group": "pages",
         "icon": "Scissors",
         "id": "pdf.split",
-        "label": "Split"
+        "label": "Split",
+        "priority": 40
+      },
+      {
+        "available": true,
+        "children": [
+          {
+            "available": true,
+            "icon": "RotateCw",
+            "id": "pdf.rotate.90",
+            "label": "90° CW"
+          },
+          {
+            "available": true,
+            "icon": "RotateCcw",
+            "id": "pdf.rotate.270",
+            "label": "90° CCW"
+          },
+          {
+            "available": true,
+            "icon": "RotateCw",
+            "id": "pdf.rotate.180",
+            "label": "180°"
+          }
+        ],
+        "group": "pages",
+        "icon": "RotateCw",
+        "id": "pdf.rotate",
+        "label": "Rotate",
+        "priority": 50
       },
       {
         "available": true,
@@ -98,93 +271,75 @@
             "label": "Even"
           }
         ],
+        "group": "pages",
         "icon": "FileOutput",
         "id": "pdf.extract",
-        "label": "Extract"
+        "label": "Extract",
+        "priority": 60
+      },
+      {
+        "available": false,
+        "group": "convert",
+        "icon": "Presentation",
+        "id": "pdf.to_pptx",
+        "label": "To PowerPoint",
+        "priority": 70
+      },
+      {
+        "available": false,
+        "group": "convert",
+        "icon": "FileSpreadsheet",
+        "id": "pdf.to_xlsx",
+        "label": "To Excel",
+        "priority": 80
+      },
+      {
+        "available": false,
+        "group": "extract",
+        "icon": "Text",
+        "id": "pdf.to_text",
+        "label": "To text",
+        "priority": 90
+      },
+      {
+        "available": false,
+        "group": "edit",
+        "icon": "Stamp",
+        "id": "pdf.watermark",
+        "label": "Watermark",
+        "priority": 100
+      },
+      {
+        "available": false,
+        "group": "edit",
+        "icon": "Hash",
+        "id": "pdf.page_numbers",
+        "label": "Page numbers",
+        "priority": 110
+      },
+      {
+        "available": false,
+        "group": "security",
+        "icon": "Lock",
+        "id": "pdf.security",
+        "label": "Protect / unlock",
+        "priority": 120
+      },
+      {
+        "available": false,
+        "group": "extract",
+        "icon": "ScanText",
+        "id": "pdf.ocr",
+        "label": "OCR",
+        "priority": 130
       },
       {
         "available": true,
-        "children": [
-          {
-            "available": true,
-            "icon": "RotateCw",
-            "id": "pdf.rotate.90",
-            "label": "90° CW"
-          },
-          {
-            "available": true,
-            "icon": "RotateCcw",
-            "id": "pdf.rotate.270",
-            "label": "90° CCW"
-          },
-          {
-            "available": true,
-            "icon": "RotateCw",
-            "id": "pdf.rotate.180",
-            "label": "180°"
-          }
-        ],
-        "icon": "RotateCw",
-        "id": "pdf.rotate",
-        "label": "Rotate"
-      },
-      {
-        "available": true,
-        "children": [
-          {
-            "available": true,
-            "icon": "Monitor",
-            "id": "pdf.to_png.72",
-            "label": "72 DPI"
-          },
-          {
-            "available": true,
-            "icon": "Gauge",
-            "id": "pdf.to_png.150",
-            "label": "150 DPI"
-          },
-          {
-            "available": true,
-            "icon": "Printer",
-            "id": "pdf.to_png.300",
-            "label": "300 DPI"
-          }
-        ],
-        "icon": "FileImage",
-        "id": "pdf.to_png",
-        "label": "PNG"
-      },
-      {
-        "available": true,
-        "children": [
-          {
-            "available": true,
-            "icon": "Monitor",
-            "id": "pdf.to_jpg.72",
-            "label": "72 DPI"
-          },
-          {
-            "available": true,
-            "icon": "Gauge",
-            "id": "pdf.to_jpg.150",
-            "label": "150 DPI"
-          },
-          {
-            "available": true,
-            "icon": "Printer",
-            "id": "pdf.to_jpg.300",
-            "label": "300 DPI"
-          }
-        ],
-        "icon": "FileImage",
-        "id": "pdf.to_jpg",
-        "label": "JPG"
-      },
-      {
-        "available": true,
+        "group": "file",
         "icon": "Copy",
         "id": "copy",
-        "label": "Duplicate"
+        "label": "Duplicate",
+        "priority": 900
       }
     ],
     "application/vnd.ms-excel": [
@@ -210,15 +365,175 @@
             "label": "Tab"
           }
         ],
-        "icon": "FileText",
+        "group": "convert",
+        "icon": "Rows3",
         "id": "sheet.to_csv",
-        "label": "CSV"
+        "label": "To CSV",
+        "priority": 10
+      },
+      {
+        "available": false,
+        "group": "convert",
+        "icon": "FileText",
+        "id": "sheet.to_pdf",
+        "label": "To PDF",
+        "priority": 20
+      },
+      {
+        "available": false,
+        "group": "convert",
+        "icon": "Braces",
+        "id": "sheet.to_json",
+        "label": "To JSON",
+        "priority": 30
+      },
+      {
+        "available": false,
+        "group": "pages",
+        "icon": "Split",
+        "id": "sheet.split",
+        "label": "Split sheets",
+        "priority": 40
+      },
+      {
+        "available": false,
+        "group": "optimize",
+        "icon": "Minimize2",
+        "id": "sheet.compress",
+        "label": "Compress",
+        "priority": 50
+      },
+      {
+        "available": false,
+        "group": "convert",
+        "icon": "FileSpreadsheet",
+        "id": "sheet.to_ods",
+        "label": "To ODS",
+        "priority": 60
+      },
+      {
+        "available": false,
+        "group": "convert",
+        "icon": "Globe",
+        "id": "sheet.to_html",
+        "label": "To HTML",
+        "priority": 70
       },
       {
         "available": true,
+        "group": "file",
         "icon": "Copy",
         "id": "copy",
-        "label": "Duplicate"
+        "label": "Duplicate",
+        "priority": 900
+      }
+    ],
+    "application/vnd.ms-powerpoint": [
+      {
+        "available": false,
+        "group": "convert",
+        "icon": "FileText",
+        "id": "slides.to_pdf",
+        "label": "To PDF",
+        "priority": 10
+      },
+      {
+        "available": false,
+        "group": "convert",
+        "icon": "Images",
+        "id": "slides.to_images",
+        "label": "To images",
+        "priority": 20
+      },
+      {
+        "available": false,
+        "group": "extract",
+        "icon": "ImageDown",
+        "id": "slides.extract_images",
+        "label": "Extract images",
+        "priority": 30
+      },
+      {
+        "available": false,
+        "group": "optimize",
+        "icon": "Minimize2",
+        "id": "slides.compress",
+        "label": "Compress",
+        "priority": 40
+      },
+      {
+        "available": false,
+        "group": "extract",
+        "icon": "Text",
+        "id": "slides.to_text",
+        "label": "To text",
+        "priority": 50
+      },
+      {
+        "available": false,
+        "group": "convert",
+        "icon": "Presentation",
+        "id": "slides.to_odp",
+        "label": "To ODP",
+        "priority": 60
+      },
+      {
+        "available": true,
+        "group": "file",
+        "icon": "Copy",
+        "id": "copy",
+        "label": "Duplicate",
+        "priority": 900
+      }
+    ],
+    "application/vnd.oasis.opendocument.presentation": [
+      {
+        "available": false,
+        "group": "convert",
+        "icon": "FileText",
+        "id": "slides.to_pdf",
+        "label": "To PDF",
+        "priority": 10
+      },
+      {
+        "available": false,
+        "group": "convert",
+        "icon": "Images",
+        "id": "slides.to_images",
+        "label": "To images",
+        "priority": 20
+      },
+      {
+        "available": false,
+        "group": "extract",
+        "icon": "ImageDown",
+        "id": "slides.extract_images",
+        "label": "Extract images",
+        "priority": 30
+      },
+      {
+        "available": false,
+        "group": "optimize",
+        "icon": "Minimize2",
+        "id": "slides.compress",
+        "label": "Compress",
+        "priority": 40
+      },
+      {
+        "available": false,
+        "group": "extract",
+        "icon": "Text",
+        "id": "slides.to_text",
+        "label": "To text",
+        "priority": 50
+      },
+      {
+        "available": true,
+        "group": "file",
+        "icon": "Copy",
+        "id": "copy",
+        "label": "Duplicate",
+        "priority": 900
       }
     ],
     "application/vnd.oasis.opendocument.spreadsheet": [
@@ -244,15 +559,183 @@
             "label": "Tab"
           }
         ],
-        "icon": "FileText",
+        "group": "convert",
+        "icon": "Rows3",
         "id": "sheet.to_csv",
-        "label": "CSV"
+        "label": "To CSV",
+        "priority": 10
+      },
+      {
+        "available": false,
+        "group": "convert",
+        "icon": "FileText",
+        "id": "sheet.to_pdf",
+        "label": "To PDF",
+        "priority": 20
+      },
+      {
+        "available": false,
+        "group": "convert",
+        "icon": "Braces",
+        "id": "sheet.to_json",
+        "label": "To JSON",
+        "priority": 30
+      },
+      {
+        "available": false,
+        "group": "pages",
+        "icon": "Split",
+        "id": "sheet.split",
+        "label": "Split sheets",
+        "priority": 40
+      },
+      {
+        "available": false,
+        "group": "optimize",
+        "icon": "Minimize2",
+        "id": "sheet.compress",
+        "label": "Compress",
+        "priority": 50
+      },
+      {
+        "available": false,
+        "group": "convert",
+        "icon": "Globe",
+        "id": "sheet.to_html",
+        "label": "To HTML",
+        "priority": 70
       },
       {
         "available": true,
+        "group": "file",
         "icon": "Copy",
         "id": "copy",
-        "label": "Duplicate"
+        "label": "Duplicate",
+        "priority": 900
+      }
+    ],
+    "application/vnd.oasis.opendocument.text": [
+      {
+        "available": false,
+        "group": "convert",
+        "icon": "FileText",
+        "id": "doc.to_pdf",
+        "label": "To PDF",
+        "priority": 10
+      },
+      {
+        "available": false,
+        "group": "convert",
+        "icon": "FileCode",
+        "id": "doc.to_md",
+        "label": "To Markdown",
+        "priority": 20
+      },
+      {
+        "available": false,
+        "group": "convert",
+        "icon": "Globe",
+        "id": "doc.to_html",
+        "label": "To HTML",
+        "priority": 30
+      },
+      {
+        "available": false,
+        "group": "optimize",
+        "icon": "Minimize2",
+        "id": "doc.compress",
+        "label": "Compress",
+        "priority": 40
+      },
+      {
+        "available": false,
+        "group": "extract",
+        "icon": "Images",
+        "id": "doc.extract_images",
+        "label": "Extract images",
+        "priority": 50
+      },
+      {
+        "available": false,
+        "group": "convert",
+        "icon": "BookOpen",
+        "id": "doc.to_epub",
+        "label": "To EPUB",
+        "priority": 70
+      },
+      {
+        "available": false,
+        "group": "extract",
+        "icon": "Text",
+        "id": "doc.to_text",
+        "label": "To text",
+        "priority": 80
+      },
+      {
+        "available": true,
+        "group": "file",
+        "icon": "Copy",
+        "id": "copy",
+        "label": "Duplicate",
+        "priority": 900
+      }
+    ],
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation": [
+      {
+        "available": false,
+        "group": "convert",
+        "icon": "FileText",
+        "id": "slides.to_pdf",
+        "label": "To PDF",
+        "priority": 10
+      },
+      {
+        "available": false,
+        "group": "convert",
+        "icon": "Images",
+        "id": "slides.to_images",
+        "label": "To images",
+        "priority": 20
+      },
+      {
+        "available": false,
+        "group": "extract",
+        "icon": "ImageDown",
+        "id": "slides.extract_images",
+        "label": "Extract images",
+        "priority": 30
+      },
+      {
+        "available": false,
+        "group": "optimize",
+        "icon": "Minimize2",
+        "id": "slides.compress",
+        "label": "Compress",
+        "priority": 40
+      },
+      {
+        "available": false,
+        "group": "extract",
+        "icon": "Text",
+        "id": "slides.to_text",
+        "label": "To text",
+        "priority": 50
+      },
+      {
+        "available": false,
+        "group": "convert",
+        "icon": "Presentation",
+        "id": "slides.to_odp",
+        "label": "To ODP",
+        "priority": 60
+      },
+      {
+        "available": true,
+        "group": "file",
+        "icon": "Copy",
+        "id": "copy",
+        "label": "Duplicate",
+        "priority": 900
       }
     ],
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": [
@@ -278,47 +761,141 @@
             "label": "Tab"
           }
         ],
-        "icon": "FileText",
+        "group": "convert",
+        "icon": "Rows3",
         "id": "sheet.to_csv",
-        "label": "CSV"
+        "label": "To CSV",
+        "priority": 10
+      },
+      {
+        "available": false,
+        "group": "convert",
+        "icon": "FileText",
+        "id": "sheet.to_pdf",
+        "label": "To PDF",
+        "priority": 20
+      },
+      {
+        "available": false,
+        "group": "convert",
+        "icon": "Braces",
+        "id": "sheet.to_json",
+        "label": "To JSON",
+        "priority": 30
+      },
+      {
+        "available": false,
+        "group": "pages",
+        "icon": "Split",
+        "id": "sheet.split",
+        "label": "Split sheets",
+        "priority": 40
+      },
+      {
+        "available": false,
+        "group": "optimize",
+        "icon": "Minimize2",
+        "id": "sheet.compress",
+        "label": "Compress",
+        "priority": 50
+      },
+      {
+        "available": false,
+        "group": "convert",
+        "icon": "FileSpreadsheet",
+        "id": "sheet.to_ods",
+        "label": "To ODS",
+        "priority": 60
+      },
+      {
+        "available": false,
+        "group": "convert",
+        "icon": "Globe",
+        "id": "sheet.to_html",
+        "label": "To HTML",
+        "priority": 70
       },
       {
         "available": true,
+        "group": "file",
         "icon": "Copy",
         "id": "copy",
-        "label": "Duplicate"
+        "label": "Duplicate",
+        "priority": 900
       }
     ],
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document": [
       {
         "available": true,
-        "icon": "FileCode",
-        "id": "doc.to_md",
-        "label": "Markdown"
-      },
-      {
-        "available": true,
-        "icon": "FilePen",
-        "id": "doc.to_odt",
-        "label": "ODT"
-      },
-      {
-        "available": true,
-        "icon": "BookOpen",
-        "id": "doc.to_epub",
-        "label": "EPUB"
-      },
-      {
-        "available": true,
+        "group": "convert",
         "icon": "FileText",
         "id": "doc.to_pdf",
-        "label": "PDF"
+        "label": "To PDF",
+        "priority": 10
       },
       {
         "available": true,
+        "group": "convert",
+        "icon": "FileCode",
+        "id": "doc.to_md",
+        "label": "To Markdown",
+        "priority": 20
+      },
+      {
+        "available": false,
+        "group": "convert",
+        "icon": "Globe",
+        "id": "doc.to_html",
+        "label": "To HTML",
+        "priority": 30
+      },
+      {
+        "available": false,
+        "group": "optimize",
+        "icon": "Minimize2",
+        "id": "doc.compress",
+        "label": "Compress",
+        "priority": 40
+      },
+      {
+        "available": false,
+        "group": "extract",
+        "icon": "Images",
+        "id": "doc.extract_images",
+        "label": "Extract images",
+        "priority": 50
+      },
+      {
+        "available": true,
+        "group": "convert",
+        "icon": "FilePen",
+        "id": "doc.to_odt",
+        "label": "To ODT",
+        "priority": 60
+      },
+      {
+        "available": true,
+        "group": "convert",
+        "icon": "BookOpen",
+        "id": "doc.to_epub",
+        "label": "To EPUB",
+        "priority": 70
+      },
+      {
+        "available": false,
+        "group": "extract",
+        "icon": "Text",
+        "id": "doc.to_text",
+        "label": "To text",
+        "priority": 80
+      },
+      {
+        "available": true,
+        "group": "file",
         "icon": "Copy",
         "id": "copy",
-        "label": "Duplicate"
+        "label": "Duplicate",
+        "priority": 900
       }
     ],
     "image/jpeg": [
@@ -327,20 +904,28 @@
         "children": [
           {
             "available": true,
-            "icon": "FileImage",
-            "id": "image.convert.png",
-            "label": "PNG"
+            "icon": "Feather",
+            "id": "image.compress.85",
+            "label": "Light"
           },
           {
             "available": true,
-            "icon": "Image",
-            "id": "image.convert.webp",
-            "label": "WebP"
+            "icon": "Gauge",
+            "id": "image.compress.70",
+            "label": "Balanced"
+          },
+          {
+            "available": true,
+            "icon": "Minimize2",
+            "id": "image.compress.40",
+            "label": "Smallest"
           }
         ],
-        "icon": "FileImage",
-        "id": "image.convert",
-        "label": "Convert"
+        "group": "optimize",
+        "icon": "Minimize2",
+        "id": "image.compress",
+        "label": "Compress",
+        "priority": 10
       },
       {
         "available": true,
@@ -370,35 +955,49 @@
             "label": "Max 1080"
           }
         ],
+        "group": "optimize",
         "icon": "Maximize2",
         "id": "image.resize",
-        "label": "Resize"
+        "label": "Resize",
+        "priority": 20
       },
       {
         "available": true,
         "children": [
           {
             "available": true,
-            "icon": "Feather",
-            "id": "image.compress.85",
-            "label": "Light"
+            "icon": "FileImage",
+            "id": "image.convert.png",
+            "label": "PNG"
           },
           {
             "available": true,
-            "icon": "Gauge",
-            "id": "image.compress.70",
-            "label": "Balanced"
-          },
-          {
-            "available": true,
-            "icon": "Minimize2",
-            "id": "image.compress.40",
-            "label": "Smallest"
+            "icon": "Image",
+            "id": "image.convert.webp",
+            "label": "WebP"
           }
         ],
-        "icon": "Minimize2",
-        "id": "image.compress",
-        "label": "Compress"
+        "group": "convert",
+        "icon": "FileImage",
+        "id": "image.convert",
+        "label": "Convert",
+        "priority": 30
+      },
+      {
+        "available": false,
+        "group": "edit",
+        "icon": "Crop",
+        "id": "image.crop",
+        "label": "Crop",
+        "priority": 40
+      },
+      {
+        "available": false,
+        "group": "edit",
+        "icon": "WandSparkles",
+        "id": "image.remove_bg",
+        "label": "Remove background",
+        "priority": 50
       },
       {
         "available": true,
@@ -422,15 +1021,59 @@
             "label": "180°"
           }
         ],
+        "group": "edit",
         "icon": "RotateCw",
         "id": "image.rotate",
-        "label": "Rotate"
+        "label": "Rotate / flip",
+        "priority": 60
+      },
+      {
+        "available": false,
+        "group": "optimize",
+        "icon": "ZoomIn",
+        "id": "image.upscale",
+        "label": "Upscale",
+        "priority": 70
+      },
+      {
+        "available": false,
+        "group": "edit",
+        "icon": "SlidersHorizontal",
+        "id": "image.edit",
+        "label": "Edit",
+        "priority": 90
+      },
+      {
+        "available": false,
+        "group": "edit",
+        "icon": "Eraser",
+        "id": "image.erase_object",
+        "label": "Object eraser",
+        "priority": 100
+      },
+      {
+        "available": false,
+        "group": "security",
+        "icon": "EyeOff",
+        "id": "image.strip_metadata",
+        "label": "Strip metadata",
+        "priority": 110
+      },
+      {
+        "available": false,
+        "group": "edit",
+        "icon": "Stamp",
+        "id": "image.watermark",
+        "label": "Watermark",
+        "priority": 120
       },
       {
         "available": true,
+        "group": "file",
         "icon": "Copy",
         "id": "copy",
-        "label": "Duplicate"
+        "label": "Duplicate",
+        "priority": 900
       }
     ],
     "image/png": [
@@ -439,20 +1082,28 @@
         "children": [
           {
             "available": true,
-            "icon": "FileImage",
-            "id": "image.convert.jpg",
-            "label": "JPG"
+            "icon": "Feather",
+            "id": "image.compress.85",
+            "label": "Light"
           },
           {
             "available": true,
-            "icon": "Image",
-            "id": "image.convert.webp",
-            "label": "WebP"
+            "icon": "Gauge",
+            "id": "image.compress.70",
+            "label": "Balanced"
+          },
+          {
+            "available": true,
+            "icon": "Minimize2",
+            "id": "image.compress.40",
+            "label": "Smallest"
           }
         ],
-        "icon": "FileImage",
-        "id": "image.convert",
-        "label": "Convert"
+        "group": "optimize",
+        "icon": "Minimize2",
+        "id": "image.compress",
+        "label": "Compress",
+        "priority": 10
       },
       {
         "available": true,
@@ -482,35 +1133,49 @@
             "label": "Max 1080"
           }
         ],
+        "group": "optimize",
         "icon": "Maximize2",
         "id": "image.resize",
-        "label": "Resize"
+        "label": "Resize",
+        "priority": 20
       },
       {
         "available": true,
         "children": [
           {
             "available": true,
-            "icon": "Feather",
-            "id": "image.compress.85",
-            "label": "Light"
+            "icon": "FileImage",
+            "id": "image.convert.jpg",
+            "label": "JPG"
           },
           {
             "available": true,
-            "icon": "Gauge",
-            "id": "image.compress.70",
-            "label": "Balanced"
-          },
-          {
-            "available": true,
-            "icon": "Minimize2",
-            "id": "image.compress.40",
-            "label": "Smallest"
+            "icon": "Image",
+            "id": "image.convert.webp",
+            "label": "WebP"
           }
         ],
-        "icon": "Minimize2",
-        "id": "image.compress",
-        "label": "Compress"
+        "group": "convert",
+        "icon": "FileImage",
+        "id": "image.convert",
+        "label": "Convert",
+        "priority": 30
+      },
+      {
+        "available": false,
+        "group": "edit",
+        "icon": "Crop",
+        "id": "image.crop",
+        "label": "Crop",
+        "priority": 40
+      },
+      {
+        "available": false,
+        "group": "edit",
+        "icon": "WandSparkles",
+        "id": "image.remove_bg",
+        "label": "Remove background",
+        "priority": 50
       },
       {
         "available": true,
@@ -534,18 +1199,124 @@
             "label": "180°"
           }
         ],
+        "group": "edit",
         "icon": "RotateCw",
         "id": "image.rotate",
-        "label": "Rotate"
+        "label": "Rotate / flip",
+        "priority": 60
+      },
+      {
+        "available": false,
+        "group": "optimize",
+        "icon": "ZoomIn",
+        "id": "image.upscale",
+        "label": "Upscale",
+        "priority": 70
+      },
+      {
+        "available": false,
+        "group": "edit",
+        "icon": "SlidersHorizontal",
+        "id": "image.edit",
+        "label": "Edit",
+        "priority": 90
+      },
+      {
+        "available": false,
+        "group": "edit",
+        "icon": "Eraser",
+        "id": "image.erase_object",
+        "label": "Object eraser",
+        "priority": 100
+      },
+      {
+        "available": false,
+        "group": "security",
+        "icon": "EyeOff",
+        "id": "image.strip_metadata",
+        "label": "Strip metadata",
+        "priority": 110
+      },
+      {
+        "available": false,
+        "group": "edit",
+        "icon": "Stamp",
+        "id": "image.watermark",
+        "label": "Watermark",
+        "priority": 120
       },
       {
         "available": true,
+        "group": "file",
         "icon": "Copy",
         "id": "copy",
-        "label": "Duplicate"
+        "label": "Duplicate",
+        "priority": 900
       }
     ],
     "image/webp": [
+      {
+        "available": true,
+        "children": [
+          {
+            "available": true,
+            "icon": "Feather",
+            "id": "image.compress.85",
+            "label": "Light"
+          },
+          {
+            "available": true,
+            "icon": "Gauge",
+            "id": "image.compress.70",
+            "label": "Balanced"
+          },
+          {
+            "available": true,
+            "icon": "Minimize2",
+            "id": "image.compress.40",
+            "label": "Smallest"
+          }
+        ],
+        "group": "optimize",
+        "icon": "Minimize2",
+        "id": "image.compress",
+        "label": "Compress",
+        "priority": 10
+      },
+      {
+        "available": true,
+        "children": [
+          {
+            "available": true,
+            "icon": "Percent",
+            "id": "image.resize.pct.50",
+            "label": "50%"
+          },
+          {
+            "available": true,
+            "icon": "Percent",
+            "id": "image.resize.pct.25",
+            "label": "25%"
+          },
+          {
+            "available": true,
+            "icon": "Maximize2",
+            "id": "image.resize.max.1920",
+            "label": "Max 1920"
+          },
+          {
+            "available": true,
+            "icon": "Maximize2",
+            "id": "image.resize.max.1080",
+            "label": "Max 1080"
+          }
+        ],
+        "group": "optimize",
+        "icon": "Maximize2",
+        "id": "image.resize",
+        "label": "Resize",
+        "priority": 20
+      },
       {
         "available": true,
         "children": [
@@ -562,67 +1333,27 @@
             "label": "JPG"
           }
         ],
+        "group": "convert",
         "icon": "FileImage",
         "id": "image.convert",
-        "label": "Convert"
+        "label": "Convert",
+        "priority": 30
       },
       {
-        "available": true,
-        "children": [
-          {
-            "available": true,
-            "icon": "Percent",
-            "id": "image.resize.pct.50",
-            "label": "50%"
-          },
-          {
-            "available": true,
-            "icon": "Percent",
-            "id": "image.resize.pct.25",
-            "label": "25%"
-          },
-          {
-            "available": true,
-            "icon": "Maximize2",
-            "id": "image.resize.max.1920",
-            "label": "Max 1920"
-          },
-          {
-            "available": true,
-            "icon": "Maximize2",
-            "id": "image.resize.max.1080",
-            "label": "Max 1080"
-          }
-        ],
-        "icon": "Maximize2",
-        "id": "image.resize",
-        "label": "Resize"
+        "available": false,
+        "group": "edit",
+        "icon": "Crop",
+        "id": "image.crop",
+        "label": "Crop",
+        "priority": 40
       },
       {
-        "available": true,
-        "children": [
-          {
-            "available": true,
-            "icon": "Feather",
-            "id": "image.compress.85",
-            "label": "Light"
-          },
-          {
-            "available": true,
-            "icon": "Gauge",
-            "id": "image.compress.70",
-            "label": "Balanced"
-          },
-          {
-            "available": true,
-            "icon": "Minimize2",
-            "id": "image.compress.40",
-            "label": "Smallest"
-          }
-        ],
-        "icon": "Minimize2",
-        "id": "image.compress",
-        "label": "Compress"
+        "available": false,
+        "group": "edit",
+        "icon": "WandSparkles",
+        "id": "image.remove_bg",
+        "label": "Remove background",
+        "priority": 50
       },
       {
         "available": true,
@@ -646,15 +1377,59 @@
             "label": "180°"
           }
         ],
+        "group": "edit",
         "icon": "RotateCw",
         "id": "image.rotate",
-        "label": "Rotate"
+        "label": "Rotate / flip",
+        "priority": 60
+      },
+      {
+        "available": false,
+        "group": "optimize",
+        "icon": "ZoomIn",
+        "id": "image.upscale",
+        "label": "Upscale",
+        "priority": 70
+      },
+      {
+        "available": false,
+        "group": "edit",
+        "icon": "SlidersHorizontal",
+        "id": "image.edit",
+        "label": "Edit",
+        "priority": 90
+      },
+      {
+        "available": false,
+        "group": "edit",
+        "icon": "Eraser",
+        "id": "image.erase_object",
+        "label": "Object eraser",
+        "priority": 100
+      },
+      {
+        "available": false,
+        "group": "security",
+        "icon": "EyeOff",
+        "id": "image.strip_metadata",
+        "label": "Strip metadata",
+        "priority": 110
+      },
+      {
+        "available": false,
+        "group": "edit",
+        "icon": "Stamp",
+        "id": "image.watermark",
+        "label": "Watermark",
+        "priority": 120
       },
       {
         "available": true,
+        "group": "file",
         "icon": "Copy",
         "id": "copy",
-        "label": "Duplicate"
+        "label": "Duplicate",
+        "priority": 900
       }
     ],
     "text/csv": [
@@ -680,73 +1455,199 @@
             "label": "Tab"
           }
         ],
+        "group": "convert",
         "icon": "FileSpreadsheet",
         "id": "sheet.to_xlsx",
-        "label": "XLSX"
+        "label": "To Excel",
+        "priority": 10
+      },
+      {
+        "available": false,
+        "group": "convert",
+        "icon": "Braces",
+        "id": "sheet.to_json",
+        "label": "To JSON",
+        "priority": 20
+      },
+      {
+        "available": false,
+        "group": "data",
+        "icon": "Columns3",
+        "id": "sheet.change_delimiter",
+        "label": "Change delimiter",
+        "priority": 30
+      },
+      {
+        "available": false,
+        "group": "convert",
+        "icon": "FileText",
+        "id": "sheet.to_pdf",
+        "label": "To PDF",
+        "priority": 40
+      },
+      {
+        "available": false,
+        "group": "data",
+        "icon": "CopyMinus",
+        "id": "sheet.dedupe",
+        "label": "Dedupe",
+        "priority": 50
+      },
+      {
+        "available": false,
+        "group": "data",
+        "icon": "ArrowDownAZ",
+        "id": "sheet.sort",
+        "label": "Sort",
+        "priority": 60
+      },
+      {
+        "available": false,
+        "group": "pages",
+        "icon": "Rows3",
+        "id": "sheet.split_rows",
+        "label": "Split by rows",
+        "priority": 70
       },
       {
         "available": true,
+        "group": "file",
         "icon": "Copy",
         "id": "copy",
-        "label": "Duplicate"
+        "label": "Duplicate",
+        "priority": 900
       }
     ],
     "text/html": [
       {
         "available": true,
-        "icon": "FileCode",
-        "id": "doc.to_md",
-        "label": "Markdown"
-      },
-      {
-        "available": true,
-        "icon": "FileType",
-        "id": "doc.to_docx",
-        "label": "Word"
-      },
-      {
-        "available": true,
+        "group": "convert",
         "icon": "FileText",
         "id": "doc.to_pdf",
-        "label": "PDF"
+        "label": "To PDF",
+        "priority": 10
       },
       {
         "available": true,
+        "group": "convert",
+        "icon": "FileType",
+        "id": "doc.to_docx",
+        "label": "To Word",
+        "priority": 20
+      },
+      {
+        "available": true,
+        "group": "convert",
+        "icon": "FileCode",
+        "id": "doc.to_md",
+        "label": "To Markdown",
+        "priority": 30
+      },
+      {
+        "available": false,
+        "group": "convert",
+        "icon": "FileImage",
+        "id": "doc.to_image",
+        "label": "To image",
+        "priority": 40
+      },
+      {
+        "available": false,
+        "group": "convert",
+        "icon": "Presentation",
+        "id": "doc.to_slides",
+        "label": "To slides",
+        "priority": 50
+      },
+      {
+        "available": false,
+        "group": "convert",
+        "icon": "BookOpen",
+        "id": "doc.to_epub",
+        "label": "To EPUB",
+        "priority": 60
+      },
+      {
+        "available": false,
+        "group": "extract",
+        "icon": "Text",
+        "id": "doc.to_text",
+        "label": "To text",
+        "priority": 70
+      },
+      {
+        "available": true,
+        "group": "file",
         "icon": "Copy",
         "id": "copy",
-        "label": "Duplicate"
+        "label": "Duplicate",
+        "priority": 900
       }
     ],
     "text/markdown": [
       {
         "available": true,
-        "icon": "FileType",
-        "id": "doc.to_docx",
-        "label": "Word"
-      },
-      {
-        "available": true,
-        "icon": "Globe",
-        "id": "doc.to_html",
-        "label": "HTML"
-      },
-      {
-        "available": true,
-        "icon": "BookOpen",
-        "id": "doc.to_epub",
-        "label": "EPUB"
-      },
-      {
-        "available": true,
+        "group": "convert",
         "icon": "FileText",
         "id": "doc.to_pdf",
-        "label": "PDF"
+        "label": "To PDF",
+        "priority": 10
       },
       {
         "available": true,
+        "group": "convert",
+        "icon": "FileType",
+        "id": "doc.to_docx",
+        "label": "To Word",
+        "priority": 20
+      },
+      {
+        "available": true,
+        "group": "convert",
+        "icon": "Globe",
+        "id": "doc.to_html",
+        "label": "To HTML",
+        "priority": 30
+      },
+      {
+        "available": false,
+        "group": "convert",
+        "icon": "FileImage",
+        "id": "doc.to_image",
+        "label": "To image",
+        "priority": 40
+      },
+      {
+        "available": false,
+        "group": "convert",
+        "icon": "Presentation",
+        "id": "doc.to_slides",
+        "label": "To slides",
+        "priority": 50
+      },
+      {
+        "available": true,
+        "group": "convert",
+        "icon": "BookOpen",
+        "id": "doc.to_epub",
+        "label": "To EPUB",
+        "priority": 60
+      },
+      {
+        "available": false,
+        "group": "extract",
+        "icon": "Text",
+        "id": "doc.to_text",
+        "label": "To text",
+        "priority": 70
+      },
+      {
+        "available": true,
+        "group": "file",
         "icon": "Copy",
         "id": "copy",
-        "label": "Duplicate"
+        "label": "Duplicate",
+        "priority": 900
       }
     ]
   }

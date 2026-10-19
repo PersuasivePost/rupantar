@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import { AnimatePresence } from "framer-motion";
 import { Monitor, Moon, MousePointerClick, Sun, type LucideIcon } from "lucide-react";
-import { listOperations, runOperation, setMockTools, type MockTools, type Operation } from "./api";
+import { listOperations, runOperation, setMockTools, setShowPlanned, type MockTools, type Operation } from "./api";
 import { fileIcon } from "./icons";
 import { LAYOUT_TEST_MIME, SAMPLE_FILES, commonMime, mimeFromFile } from "./mockFiles";
 import { RadialMenu } from "./components/RadialMenu";
@@ -39,12 +39,14 @@ const TOOLS: { key: keyof MockTools; label: string }[] = [
 
 /**
  * Dev playground: pick one or more mock file types (and how many of each), click (or drop
- * files) anywhere to summon the menu there. Tool switches hide what a missing tool would.
+ * files) anywhere to summon the menu there. Tool switches hide what a missing tool would;
+ * "Planned" shows operations that aren't implemented yet, to preview the full menus.
  */
 export default function Playground() {
   const [types, setTypes] = useState<string[]>([SAMPLE_FILES[0].label]);
   const [copies, setCopies] = useState("1");
   const [tools, setTools] = useState<MockTools>({ pandoc: true, typst: true, pdfium: true });
+  const [planned, setPlanned] = useState(false);
   const [menu, setMenu] = useState<OpenMenu | null>(null);
   const [log, setLog] = useState<string[]>([]);
   const [theme, setTheme] = useState<Theme>("system");
@@ -71,6 +73,11 @@ export default function Playground() {
     const next = { ...tools, [key]: !tools[key] };
     setTools(next);
     setMockTools(next);
+  };
+
+  const togglePlanned = () => {
+    setPlanned(!planned);
+    setShowPlanned(!planned);
   };
 
   const summon = useCallback(async (x: number, y: number, files: MockFile[]) => {
@@ -139,6 +146,11 @@ export default function Playground() {
             options={TOOLS.map((t) => ({ value: t.key, label: t.label, on: tools[t.key] }))}
             onToggle={(k) => toggleTool(k as keyof MockTools)}
           />
+          <Toggles
+            label="Preview"
+            options={[{ value: "planned", label: "Planned ops", on: planned }]}
+            onToggle={togglePlanned}
+          />
           <Segmented
             label="Theme"
             value={theme}
@@ -162,7 +174,9 @@ export default function Playground() {
         <p className="text-xs" style={{ color: "var(--text-dim)" }}>
           Selected: {selection.length === 1 ? selection[0].name : `${selection.length} files`} · mixed types show only what all of them support
         </p>
-        <p className="text-xs" style={{ color: "var(--text-dim)" }}>Wedges with a dot have sub-options (DPI, page range, delimiter, …)</p>
+        <p className="text-xs" style={{ color: "var(--text-dim)" }}>
+          Wedges with a dot have sub-options (DPI, page range, delimiter, …) · past six operations, “More” opens the rest (scroll to page)
+        </p>
       </div>
 
       {log.length > 0 && (

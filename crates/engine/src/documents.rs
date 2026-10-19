@@ -22,7 +22,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use crate::mime::{self, DOCX, HTML, MARKDOWN};
-use crate::{create_unique_sibling, tools, Converter, EngineConfig, EngineError, Operation, Options, Result};
+use crate::{catalog, create_unique_sibling, tools, Converter, EngineConfig, EngineError, Operation, Options, Result};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Format {
@@ -55,15 +55,15 @@ impl Format {
         }
     }
 
-    /// `(op id, label, lucide icon, file extension)`.
-    fn meta(self) -> (&'static str, &'static str, &'static str, &'static str) {
+    /// `(op id, format name for messages, file extension)`. Menu labels are in the catalog.
+    fn meta(self) -> (&'static str, &'static str, &'static str) {
         match self {
-            Markdown => ("doc.to_md", "Markdown", "FileCode", "md"),
-            Docx => ("doc.to_docx", "Word", "FileType", "docx"),
-            Html => ("doc.to_html", "HTML", "Globe", "html"),
-            Odt => ("doc.to_odt", "ODT", "FilePen", "odt"),
-            Epub => ("doc.to_epub", "EPUB", "BookOpen", "epub"),
-            Pdf => ("doc.to_pdf", "PDF", "FileText", "pdf"),
+            Markdown => ("doc.to_md", "Markdown", "md"),
+            Docx => ("doc.to_docx", "Word", "docx"),
+            Html => ("doc.to_html", "HTML", "html"),
+            Odt => ("doc.to_odt", "ODT", "odt"),
+            Epub => ("doc.to_epub", "EPUB", "epub"),
+            Pdf => ("doc.to_pdf", "PDF", "pdf"),
         }
     }
 
@@ -121,7 +121,7 @@ impl DocumentConverter {
 
     fn convert(&self, pandoc: &Path, input: &Path, from: Format, to: Format) -> Result<PathBuf> {
         let input = std::path::absolute(input)?;
-        let (file, output) = create_unique_sibling(&input, "converted", Some(to.meta().3))?;
+        let (file, output) = create_unique_sibling(&input, "converted", Some(to.meta().2))?;
         drop(file); // the tool writes the file itself; we only reserved the name
         let result = WorkDir::create().and_then(|work| match to {
             Pdf => self.to_pdf(pandoc, &work, &input, from, &output),
@@ -250,8 +250,7 @@ impl Converter for DocumentConverter {
         from.targets()
             .iter()
             .map(|&to| {
-                let (id, label, icon, _) = to.meta();
-                Operation::new(id, label, icon).available(self.available(to))
+                catalog::op(to.meta().0).available(self.available(to))
             })
             .collect()
     }

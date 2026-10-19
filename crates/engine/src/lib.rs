@@ -8,6 +8,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
+pub mod catalog;
 pub mod copy;
 pub mod documents;
 pub mod images;
@@ -66,6 +67,11 @@ pub struct Operation {
     /// the UI can explain), but the menu does not render it.
     #[serde(default = "yes")]
     pub available: bool,
+    /// Menu position for this selection, lower first (from the catalog; top level only).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub priority: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<catalog::Group>,
 }
 
 fn yes() -> bool {
@@ -74,7 +80,15 @@ fn yes() -> bool {
 
 impl Operation {
     pub fn new(id: &str, label: &str, icon: &str) -> Self {
-        Self { id: id.into(), label: label.into(), icon: icon.into(), children: Vec::new(), available: true }
+        Self {
+            id: id.into(),
+            label: label.into(),
+            icon: icon.into(),
+            children: Vec::new(),
+            available: true,
+            priority: None,
+            group: None,
+        }
     }
 
     pub fn with_children(mut self, children: Vec<Operation>) -> Self {
@@ -185,28 +199,54 @@ impl Registry {
         self.converters.push(c);
     }
 
+    /// The menu for one file of type `mime`, in priority order: every catalog entry for the
+    /// type, with the ones no converter implements yet marked unavailable.
     pub fn operations(&self, mime: &str) -> Vec<Operation> {
+        let mut implemented: Vec<Operation> =
+            self.converters.iter().filter(|c| c.can_handle(mime)).flat_map(|c| c.operations(mime)).collect();
+        let mut ops: Vec<Operation> = catalog::entries_for(mime)
+            .map(|entry| {
+                let op = match implemented.iter().position(|o| o.id == entry.id) {
+                    Some(i) => implemented.remove(i),
+                    None => entry.operation().available(false), // planned
+                };
+                Operation { priority: Some(entry.priority), ..op }
+            })
+            .collect();
+        ops.append(&mut implemented); // types without a menu (tests keep the others complete)
+        by_priority(&mut ops);
+        ops
+    }
+
+    /// Operations that only exist for this selection (e.g. "Merge"), with the selection's
+    /// priority from the first file's menu.
+    pub fn batch_operations(&self, mimes: &[String]) -> Vec<Operation> {
+        let menu = mimes.first().map_or(&[][..], |m| catalog::menu(m));
         self.converters
             .iter()
-            .filter(|c| c.can_handle(mime))
-            .flat_map(|c| c.operations(mime))
+            .flat_map(|c| c.batch_operations(mimes))
+            .map(|op| {
+                let priority = menu.iter().find(|e| e.id == op.id).map(|e| e.priority_for(mimes.len()));
+                Operation { priority, ..op }
+            })
             .collect()
     }
 
-    /// Operations for a selection (one mime per file): batch operations first (e.g. "Merge
-    /// PDFs"), then the per-file operations every selected type offers.
+    /// Operations for a selection (one mime per file): the batch operations plus the per-file
+    /// operations every selected type offers, in priority order (ties: batch first).
     pub fn operations_for(&self, mimes: &[String]) -> Vec<Operation> {
         let Some((first, rest)) = mimes.split_first() else { return Vec::new() };
         let mut common = self.operations(first);
         for m in rest.iter().filter(|m| *m != first) {
             common = intersect(common, &self.operations(m));
         }
-        let mut ops: Vec<Operation> = self.converters.iter().flat_map(|c| c.batch_operations(mimes)).collect();
+        let mut ops = self.batch_operations(mimes);
         for op in common {
             if !ops.iter().any(|o| o.id == op.id) {
                 ops.push(op);
             }
         }
+        by_priority(&mut ops);
         ops
     }
 
@@ -238,6 +278,11 @@ impl Registry {
             EngineError::Unsupported(mimes.join(", "))
         })
     }
+}
+
+/// Stable sort by priority; operations without one go last.
+fn by_priority(ops: &mut [Operation]) {
+    ops.sort_by_key(|o| o.priority.unwrap_or(u16::MAX));
 }
 
 /// `stem (tag).ext`, then `stem (tag 2).ext`, `stem (tag 3).ext`, ...
@@ -319,45 +364,115 @@ mod tests {
         assert!(ids.contains(&"copy".to_string()));
     }
 
+    fn ids(ops: &[Operation]) -> Vec<&str> {
+        ops.iter().map(|o| o.id.as_str()).collect()
+    }
+
+    /// What the menu would show: available operations only.
+    fn visible(ops: &[Operation]) -> Vec<&str> {
+        ops.iter().filter(|o| o.available).map(|o| o.id.as_str()).collect()
+    }
+
+    fn mimes(v: &[&str]) -> Vec<String> {
+        v.iter().map(|x| x.to_string()).collect()
+    }
+
+    /// Registry with every tool "present" (any existing file stands in; only presence is checked).
+    fn all_tools() -> Registry {
+        let exe = std::env::current_exe().unwrap();
+        Registry::with_config(&EngineConfig {
+            pandoc_path: Some(exe.clone()),
+            typst_path: Some(exe.clone()),
+            pdfium_path: Some(exe),
+            ..EngineConfig::default()
+        })
+    }
+
     #[test]
     fn registry_offers_spreadsheet_ops() {
         let r = Registry::with_defaults();
-        let ids = |m: &str| r.operations(m).into_iter().map(|o| o.id).collect::<Vec<_>>();
-        assert_eq!(ids(mime::CSV), ["sheet.to_xlsx", "copy"]);
+        assert_eq!(visible(&r.operations(mime::CSV)), ["sheet.to_xlsx", "copy"]);
         for m in [mime::XLSX, mime::XLS, mime::ODS] {
-            assert_eq!(ids(m), ["sheet.to_csv", "copy"]);
+            assert_eq!(visible(&r.operations(m)), ["sheet.to_csv", "copy"]);
         }
     }
 
-    fn ids(ops: &[Operation]) -> Vec<&str> {
-        ops.iter().map(|o| o.id.as_str()).collect()
+    #[test]
+    fn menus_follow_the_catalog_with_planned_ops_unavailable() {
+        let r = all_tools();
+        for (mime_list, _) in catalog::MENUS {
+            for &m in *mime_list {
+                let ops = r.operations(m);
+                let expected: Vec<&str> = catalog::entries_for(m).map(|e| e.id).collect();
+                assert_eq!(ids(&ops), expected, "{m}: every entry, in order, and nothing else");
+                for (op, entry) in ops.iter().zip(catalog::entries_for(m)) {
+                    assert_eq!((op.label.as_str(), op.icon.as_str()), (entry.label, entry.icon));
+                    assert_eq!((op.priority, op.group), (Some(entry.priority), Some(entry.group)));
+                }
+            }
+        }
+        // Implemented ops are available (all tools present); planned ones aren't and have no children.
+        assert_eq!(visible(&r.operations(mime::PDF)), ["pdf.to_image", "pdf.split", "pdf.rotate", "pdf.extract", "copy"]);
+        assert_eq!(visible(&r.operations("image/png")), ["image.compress", "image.resize", "image.convert", "image.rotate", "copy"]);
+        assert_eq!(visible(&r.operations(mime::DOCX)), ["doc.to_pdf", "doc.to_md", "doc.to_odt", "doc.to_epub", "copy"]);
+        assert_eq!(visible(&r.operations(mime::MARKDOWN)), ["doc.to_pdf", "doc.to_docx", "doc.to_html", "doc.to_epub", "copy"]);
+        assert_eq!(visible(&r.operations(mime::HTML)), ["doc.to_pdf", "doc.to_docx", "doc.to_md", "copy"]);
+        for m in [mime::PPTX, mime::PPT, mime::ODP, mime::DOC, mime::ODT] {
+            assert_eq!(visible(&r.operations(m)), ["copy"], "{m}: nothing implemented yet");
+        }
+        let planned = r.operations(mime::PDF).into_iter().find(|o| o.id == "pdf.ocr").unwrap();
+        assert!(!planned.available && planned.children.is_empty());
+        // Types without a menu get the converters' operations as they are.
+        assert_eq!(ids(&r.operations(mime::UNKNOWN)), ["copy"]);
+    }
+
+    /// Everything a converter implements has a catalog entry, so nothing ends up unordered.
+    #[test]
+    fn every_implemented_operation_is_in_the_catalog() {
+        let r = all_tools();
+        for (mime_list, _) in catalog::MENUS {
+            for &m in *mime_list {
+                for op in r.converters.iter().filter(|c| c.can_handle(m)).flat_map(|c| c.operations(m)) {
+                    assert!(catalog::entries_for(m).any(|e| e.id == op.id), "{m}: {} is not in the catalog", op.id);
+                }
+            }
+        }
+        for sel in [&[mime::PDF, mime::PDF][..], &["image/png"], &["image/png", "image/jpeg"]] {
+            for op in r.converters.iter().flat_map(|c| c.batch_operations(&mimes(sel))) {
+                assert!(catalog::menu(sel[0]).iter().any(|e| e.id == op.id && e.batch), "{} is not a batch entry", op.id);
+            }
+        }
     }
 
     #[test]
     fn selections_offer_what_every_type_offers() {
         let r = Registry::with_defaults();
-        let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
-        // Images always get the batch "Image(s) -> PDF" first, then the per-type ops.
-        let one = r.operations_for(&s(&["image/png"]));
-        assert_eq!(one[0].id, "pdf.from_images");
-        assert_eq!(one[1..], r.operations("image/png"));
-        assert_eq!(r.operations_for(&s(&["image/png", "image/png"]))[1..], r.operations("image/png"));
-        assert_eq!(ids(&r.operations_for(&s(&[mime::PDF]))), ids(&r.operations(mime::PDF)), "merge needs two");
-        assert_eq!(ids(&r.operations_for(&s(&[mime::PDF, mime::PDF])))[0], "pdf.merge");
+        // One image: "To PDF" (batch) takes its catalog slot under More; two or more: first.
+        let one = r.operations_for(&mimes(&["image/png"]));
+        let at = one.iter().position(|o| o.id == "pdf.from_images").unwrap();
+        assert_eq!(ids(&one[..at]), ids(&r.operations("image/png"))[..at]);
+        assert_eq!(visible(&one)[..5], ["image.compress", "image.resize", "image.convert", "image.rotate", "pdf.from_images"]);
+        let two = r.operations_for(&mimes(&["image/png", "image/png"]));
+        assert_eq!(two[0].id, "pdf.from_images");
+        assert_eq!(two[1..], r.operations("image/png"));
+        assert_eq!(ids(&r.operations_for(&mimes(&[mime::PDF]))), ids(&r.operations(mime::PDF)), "merge needs two");
+        let pdfs = r.operations_for(&mimes(&[mime::PDF, mime::PDF]));
+        assert_eq!((pdfs[0].id.as_str(), pdfs[0].priority), ("pdf.merge", Some(0)));
 
         // PNG converts to JPG/WebP, JPEG to PNG/WebP: together only WebP is valid for both.
-        let mixed = r.operations_for(&s(&["image/png", "image/jpeg"]));
-        assert_eq!(ids(&mixed), ["pdf.from_images", "image.convert", "image.resize", "image.compress", "image.rotate", "copy"]);
-        assert_eq!(ids(&mixed[1].children), ["image.convert.webp"]);
-        assert_eq!(mixed[2].children, r.operations("image/png")[1].children);
+        let mixed = r.operations_for(&mimes(&["image/png", "image/jpeg"]));
+        assert_eq!(visible(&mixed), ["pdf.from_images", "image.compress", "image.resize", "image.convert", "image.rotate", "copy"]);
+        let convert = mixed.iter().find(|o| o.id == "image.convert").unwrap();
+        assert_eq!(ids(&convert.children), ["image.convert.webp"]);
 
-        assert_eq!(ids(&r.operations_for(&s(&["image/png", mime::CSV]))), ["copy"]);
+        assert_eq!(visible(&r.operations_for(&mimes(&["image/png", mime::CSV]))), ["copy"]);
         assert!(r.operations_for(&[]).is_empty());
 
-        // Availability is the AND across types.
-        let docs = r.operations_for(&s(&[mime::DOCX, mime::MARKDOWN]));
-        assert_eq!(ids(&docs), ["doc.to_epub", "doc.to_pdf", "copy"]);
-        assert_eq!(docs.iter().map(|o| o.available).collect::<Vec<_>>(), [false, false, true]);
+        // Availability is the AND across types: DOCX -> HTML is only planned.
+        let r = all_tools();
+        let docs = r.operations_for(&mimes(&[mime::DOCX, mime::MARKDOWN]));
+        assert_eq!(ids(&docs), ["doc.to_pdf", "doc.to_html", "doc.to_epub", "doc.to_text", "copy"]);
+        assert_eq!(docs.iter().map(|o| o.available).collect::<Vec<_>>(), [true, false, true, false, true]);
     }
 
     #[test]
@@ -435,17 +550,11 @@ mod tests {
     /// Regenerate with `UPDATE_SNAPSHOT=1 cargo test -p engine`.
     #[test]
     fn frontend_operation_snapshot_is_current() {
-        let exe = std::env::current_exe().unwrap();
-        let config = EngineConfig {
-            pandoc_path: Some(exe.clone()),
-            typst_path: Some(exe.clone()),
-            pdfium_path: Some(exe),
-            ..EngineConfig::default()
-        };
-        let r = Registry::with_config(&config);
+        let r = all_tools();
         let mimes = [
-            mime::PDF, mime::DOCX, mime::MARKDOWN, mime::HTML, "image/png", "image/jpeg", "image/webp",
-            mime::XLSX, mime::XLS, mime::ODS, mime::CSV, mime::UNKNOWN,
+            mime::PDF, mime::DOCX, mime::DOC, mime::ODT, mime::MARKDOWN, mime::HTML, "image/png", "image/jpeg",
+            "image/webp", mime::XLSX, mime::XLS, mime::ODS, mime::CSV, mime::PPTX, mime::PPT, mime::ODP,
+            mime::UNKNOWN,
         ];
         let operations: serde_json::Map<String, serde_json::Value> =
             mimes.iter().map(|m| (m.to_string(), serde_json::to_value(r.operations(m)).unwrap())).collect();
@@ -456,8 +565,7 @@ mod tests {
             .iter()
             .map(|sel| {
                 let mimes: Vec<String> = sel.iter().map(|m| m.to_string()).collect();
-                let ops: Vec<Operation> = r.converters.iter().flat_map(|c| c.batch_operations(&mimes)).collect();
-                (mimes.join(","), serde_json::to_value(ops).unwrap())
+                (mimes.join(","), serde_json::to_value(r.batch_operations(&mimes)).unwrap())
             })
             .collect();
         let snapshot = serde_json::json!({ "operations": operations, "batch": batch });

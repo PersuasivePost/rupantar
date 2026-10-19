@@ -6,7 +6,7 @@
 //! - `pdf.extract.<pages>`: `1`, `1-3`, `3-`, `-2`, `1,4-5`, `odd`, `even` (option `pages`).
 //!   Ranges are clipped to the document; selecting no existing page is an error.
 //! - `pdf.rotate.<90|180|270>`: clockwise, added to each page's current rotation (option `degrees`).
-//! - `pdf.to_png.<dpi>` / `pdf.to_jpg.<dpi>`: one image per page (option `dpi`, 1..=1200), white
+//! - `pdf.to_png.<dpi>` / `pdf.to_jpg.<dpi>` (listed under `pdf.to_image`): one image per page (option `dpi`, 1..=1200), white
 //!   background; `name (page N).png`, or `name (converted).png` for a one-page PDF. Unavailable
 //!   (listed, not rendered by the menu) when pdfium isn't found.
 //! - Batch: `pdf.merge` (two or more PDFs, in selection order, next to the first) and
@@ -29,7 +29,7 @@ use pdfium_render::prelude::{PdfColor, PdfRenderConfig, Pdfium};
 
 use crate::mime::{self, PDF};
 use crate::{
-    create_unique, sibling_name, write_all_or_nothing, Converter, EngineConfig, EngineError, Operation, Options, Result,
+    catalog, create_unique, sibling_name, write_all_or_nothing, Converter, EngineConfig, EngineError, Operation, Options, Result,
 };
 
 const IMAGE_MIMES: [&str; 3] = ["image/png", "image/jpeg", "image/webp"];
@@ -488,12 +488,15 @@ fn op(id: &str, label: &str, icon: &str) -> Operation {
     Operation::new(id, label, icon)
 }
 
-fn dpis(base: &str) -> Vec<Operation> {
-    vec![
-        op(&format!("{base}.72"), "72 DPI", "Monitor"),
-        op(&format!("{base}.150"), "150 DPI", "Gauge"),
-        op(&format!("{base}.300"), "300 DPI", "Printer"),
-    ]
+/// PNG and JPG at each DPI: the sub-options of "To image".
+fn render_targets() -> Vec<Operation> {
+    let dpis = [(72, "Monitor"), (150, "Gauge"), (300, "Printer")];
+    [("png", "PNG"), ("jpg", "JPG")]
+        .into_iter()
+        .flat_map(|(ext, name)| {
+            dpis.into_iter().map(move |(dpi, icon)| op(&format!("pdf.to_{ext}.{dpi}"), &format!("{name} {dpi} DPI"), icon))
+        })
+        .collect()
 }
 
 fn check_inputs(inputs: &[PathBuf], allowed: &[&str]) -> Result<()> {
@@ -520,31 +523,29 @@ impl Converter for PdfConverter {
         }
         let render = self.pdfium.is_some();
         vec![
-            op("pdf.split", "Split", "Scissors"),
-            op("pdf.extract", "Extract", "FileOutput").with_children(vec![
+            catalog::op("pdf.split"),
+            catalog::op("pdf.extract").with_children(vec![
                 op("pdf.extract.1", "Page 1", "FileDigit"),
                 op("pdf.extract.1-3", "Pages 1\u{2013}3", "Files"),
                 op("pdf.extract.odd", "Odd", "ListOrdered"),
                 op("pdf.extract.even", "Even", "ListOrdered"),
             ]),
-            op("pdf.rotate", "Rotate", "RotateCw").with_children(vec![
+            catalog::op("pdf.rotate").with_children(vec![
                 op("pdf.rotate.90", "90\u{b0} CW", "RotateCw"),
                 op("pdf.rotate.270", "90\u{b0} CCW", "RotateCcw"),
                 op("pdf.rotate.180", "180\u{b0}", "RotateCw"),
             ]),
-            op("pdf.to_png", "PNG", "FileImage").with_children(dpis("pdf.to_png")).available(render),
-            op("pdf.to_jpg", "JPG", "FileImage").with_children(dpis("pdf.to_jpg")).available(render),
+            catalog::op("pdf.to_image").with_children(render_targets()).available(render),
         ]
     }
 
     fn batch_operations(&self, mimes: &[String]) -> Vec<Operation> {
         let mut ops = Vec::new();
         if mimes.len() >= 2 && mimes.iter().all(|m| m == PDF) {
-            ops.push(op("pdf.merge", "Merge PDFs", "Merge"));
+            ops.push(catalog::op("pdf.merge"));
         }
         if !mimes.is_empty() && mimes.iter().all(|m| IMAGE_MIMES.contains(&m.as_str())) {
-            let label = if mimes.len() > 1 { "Images \u{2192} PDF" } else { "Image \u{2192} PDF" };
-            ops.push(op("pdf.from_images", label, "FileText").with_children(vec![
+            ops.push(catalog::op("pdf.from_images").with_children(vec![
                 op("pdf.from_images.a4", "Fit A4", "RectangleVertical"),
                 op("pdf.from_images.original", "Original size", "Scaling"),
             ]));
@@ -853,8 +854,7 @@ mod tests {
                 ("pdf.split".into(), true),
                 ("pdf.extract".into(), true),
                 ("pdf.rotate".into(), true),
-                ("pdf.to_png".into(), false),
-                ("pdf.to_jpg".into(), false),
+                ("pdf.to_image".into(), false),
             ]
         );
         let exe = std::env::current_exe().unwrap();
@@ -863,11 +863,13 @@ mod tests {
         assert!(without.operations("image/png").is_empty());
 
         let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
-        let batch = |v: &[&str]| without.batch_operations(&s(v)).into_iter().map(|o| o.label).collect::<Vec<_>>();
-        assert_eq!(batch(&[PDF, PDF]), ["Merge PDFs"]);
+        let batch = |v: &[&str]| without.batch_operations(&s(v)).into_iter().map(|o| o.id).collect::<Vec<_>>();
+        assert_eq!(batch(&[PDF, PDF]), ["pdf.merge"]);
         assert!(batch(&[PDF]).is_empty());
-        assert_eq!(batch(&["image/png"]), ["Image \u{2192} PDF"]);
-        assert_eq!(batch(&["image/png", "image/webp"]), ["Images \u{2192} PDF"]);
+        assert_eq!(batch(&["image/png"]), ["pdf.from_images"]);
+        assert_eq!(batch(&["image/png", "image/webp"]), ["pdf.from_images"]);
+        let kids: Vec<_> = without.operations(PDF).pop().unwrap().children.into_iter().map(|o| o.id).collect();
+        assert_eq!(kids, ["pdf.to_png.72", "pdf.to_png.150", "pdf.to_png.300", "pdf.to_jpg.72", "pdf.to_jpg.150", "pdf.to_jpg.300"]);
         assert!(batch(&[PDF, "image/png"]).is_empty());
     }
 
