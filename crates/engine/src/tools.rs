@@ -28,6 +28,21 @@ pub fn find(name: &str, dirs: &[PathBuf]) -> Option<PathBuf> {
     dirs.iter().chain(&path_dirs).map(|d| d.join(&file)).find(|p| is_executable(p))
 }
 
+/// For tests: `name` on PATH, else a sidecar fetched into `src-tauri/binaries/` by
+/// scripts/fetch-sidecars.sh (`name-<target triple>`) that runs on this machine.
+#[cfg(test)]
+pub(crate) fn for_tests(name: &str) -> Option<PathBuf> {
+    find(name, &[]).or_else(|| {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../src-tauri/binaries");
+        let prefix = format!("{name}-");
+        std::fs::read_dir(dir).ok()?.flatten().map(|e| e.path()).find(|p| {
+            p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with(&prefix))
+                && is_executable(p)
+                && std::process::Command::new(p).arg("--version").output().is_ok_and(|o| o.status.success())
+        })
+    })
+}
+
 /// Whether `path` is a file we could run (on Unix: has an execute bit).
 pub fn is_executable(path: &Path) -> bool {
     #[cfg(unix)]

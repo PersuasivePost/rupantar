@@ -90,7 +90,7 @@ const DUPLICATE: Entry = e("copy", "Duplicate", "Copy", 900, File);
 pub const PDF_MENU: &[Entry] = &[
     e("pdf.merge", "Merge", "Merge", 5, Pages).multi(0).batch(),
     e("pdf.compress", "Compress", "Minimize2", 10, Optimize),
-    e("pdf.to_docx", "To Word", "FileType", 20, Convert),
+    e("pdf.to_docx", "To Word (text)", "FileType", 20, Convert),
     e("pdf.to_image", "To image", "FileImage", 30, Convert),
     e("pdf.split", "Split", "Scissors", 40, Pages),
     e("pdf.rotate", "Rotate", "RotateCw", 50, Pages),
@@ -227,7 +227,7 @@ mod tests {
         let more = |mime: &str| labels(mime)[5..].to_vec();
         let top = |mime: &str| labels(mime)[..5].to_vec();
 
-        assert_eq!(top(PDF), ["Compress", "To Word", "To image", "Split", "Rotate"]);
+        assert_eq!(top(PDF), ["Compress", "To Word (text)", "To image", "Split", "Rotate"]);
         assert_eq!(
             more(PDF),
             ["Extract", "To PowerPoint", "To Excel", "To text", "Watermark", "Page numbers", "Protect / unlock", "OCR", "Duplicate"]

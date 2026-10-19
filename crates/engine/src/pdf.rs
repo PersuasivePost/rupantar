@@ -9,6 +9,9 @@
 //! - `pdf.to_png.<dpi>` / `pdf.to_jpg.<dpi>` (listed under `pdf.to_image`): one image per page (option `dpi`, 1..=1200), white
 //!   background; `name (page N).png`, or `name (converted).png` for a one-page PDF. Unavailable
 //!   (listed, not rendered by the menu) when pdfium isn't found.
+//! - `pdf.to_pptx` (pages rendered at 150 DPI, one per slide, deck built by pandoc; slides take
+//!   the first page's aspect ratio) and `pdf.to_docx` ("To Word (text)": text structure rebuilt
+//!   from the layout, then pandoc). Both need pdfium and pandoc.
 //! - Batch: `pdf.merge` (two or more PDFs, in selection order, next to the first) and
 //!   `pdf.from_images.<a4|original>` (images, one per page, option `fit`). A4 picks portrait or
 //!   landscape to match each image, keeps a 0.5" margin and only ever shrinks; original size
@@ -61,6 +64,9 @@ enum Action {
     PageNumbers(Corner),
     Watermark(String),
     Text { markdown: bool },
+    /// pdfium + pandoc.
+    ToPptx,
+    ToDocx,
 }
 
 /// Image recompression for `pdf.compress`: images larger than `max_side` px are downsampled,
@@ -156,6 +162,8 @@ fn parse_action(id: &str, options: &Options) -> Result<Action> {
             }
             Ok(Action::Watermark(text))
         }
+        ["pdf", "to_pptx"] => Ok(Action::ToPptx),
+        ["pdf", "to_docx"] => Ok(Action::ToDocx),
         ["pdf", "to_text", rest @ ..] => match value(options, "format", rest)?.as_ref() {
             "txt" => Ok(Action::Text { markdown: false }),
             "md" => Ok(Action::Text { markdown: true }),
@@ -851,7 +859,7 @@ fn to_text(library: &Path, input: &Path, markdown: bool) -> Result<PathBuf> {
     let doc = pdfium.load_pdf_from_file(input, None).map_err(err)?;
     let mut pages = Vec::new();
     for page in doc.pages().iter() {
-        let text = page.text().map_err(err)?.all().replace("\r\n", "\n").replace('\r', "\n");
+        let text = clean_text(&page.text().map_err(err)?.all().replace("\r\n", "\n").replace('\r', "\n"));
         let lines: Vec<String> =
             text.lines().map(|l| if markdown { markdown_line(l.trim_end()) } else { l.trim_end().to_string() }).collect();
         pages.push(lines.join("\n").trim_matches('\n').to_string());
@@ -874,13 +882,17 @@ fn pdfium(library: &Path) -> Result<&'static Pdfium> {
         .map_err(|e| EngineError::Pdfium(format!("could not load {}: {e}", library.display())))
 }
 
-fn render(library: &Path, input: &Path, format: ImageFormat, dpi: u16) -> Result<Vec<PathBuf>> {
+fn pdfium_error(e: pdfium_render::prelude::PdfiumError) -> EngineError {
+    EngineError::Pdfium(format!("{e:?}"))
+}
+
+/// Renders each page at `dpi` on white and hands it to `each(index, page count, image)`, one at
+/// a time (a long document never has every page in memory).
+fn render_pages(library: &Path, input: &Path, dpi: u16, mut each: impl FnMut(usize, usize, DynamicImage) -> Result<()>) -> Result<()> {
     if !input.is_file() {
         return Err(EngineError::InputNotFound(input.to_path_buf()));
     }
-    let pdfium = pdfium(library)?;
-    let err = |e: pdfium_render::prelude::PdfiumError| EngineError::Pdfium(format!("{e:?}"));
-    let doc = pdfium.load_pdf_from_file(input, None).map_err(err)?;
+    let doc = pdfium(library)?.load_pdf_from_file(input, None).map_err(pdfium_error)?;
     let config = PdfRenderConfig::new()
         .scale_page_by_factor(f32::from(dpi) / 72.0)
         .set_maximum_width(MAX_RENDER_PX)
@@ -888,27 +900,363 @@ fn render(library: &Path, input: &Path, format: ImageFormat, dpi: u16) -> Result
         .set_clear_color(PdfColor::WHITE)
         .render_form_data(true);
     let pages = doc.pages();
-    let count = pages.len();
+    let count = pages.len() as usize;
+    for (i, page) in pages.iter().enumerate() {
+        each(i, count, page.render_with_config(&config).map_err(pdfium_error)?.as_image().map_err(pdfium_error)?)?;
+    }
+    Ok(())
+}
+
+fn render(library: &Path, input: &Path, format: ImageFormat, dpi: u16) -> Result<Vec<PathBuf>> {
     let ext = if format == ImageFormat::Png { "png" } else { "jpg" };
     let mut outputs = Vec::new();
-    for (i, page) in pages.iter().enumerate() {
-        let image = page.render_with_config(&config).map_err(err)?.as_image().map_err(err)?;
-        let bytes = crate::images::encode(&image, format, Some(90))?;
+    render_pages(library, input, dpi, |i, count, image| {
         let tag = if count == 1 { "converted".to_string() } else { format!("page {}", i + 1) };
-        outputs.push((tag, bytes));
-    }
+        outputs.push((tag, crate::images::encode(&image, format, Some(90))?));
+        Ok(())
+    })?;
     write_siblings(input, ext, outputs)
+}
+
+// ---- PDF -> PowerPoint / Word (pdfium + pandoc) ------------------------------------------
+
+/// Slides are 10 in on their long side (EMU: 914 400 per inch); PowerPoint allows 1-56 in.
+const SLIDE_LONG_EMU: f64 = 9_144_000.0;
+const SLIDE_DPI: u16 = 150;
+
+/// Reserves `name (converted).ext` for a tool to write, runs `write(output)`, and removes the
+/// reservation if that fails.
+fn tool_output(input: &Path, ext: &str, write: impl FnOnce(&Path) -> Result<()>) -> Result<PathBuf> {
+    let (file, output) = crate::create_unique_sibling(input, "converted", Some(ext))?;
+    drop(file);
+    match write(&output) {
+        Ok(()) => Ok(output),
+        Err(e) => {
+            let _ = std::fs::remove_file(&output);
+            Err(e)
+        }
+    }
+}
+
+/// `(cx, cy)` in EMU of a slide with the aspect ratio of a `w` x `h` page.
+fn slide_size(w: u32, h: u32) -> (i64, i64) {
+    let (w, h) = (f64::from(w.max(1)), f64::from(h.max(1)));
+    let (cx, cy) = if w >= h { (SLIDE_LONG_EMU, SLIDE_LONG_EMU * h / w) } else { (SLIDE_LONG_EMU * w / h, SLIDE_LONG_EMU) };
+    (cx.max(914_400.0).round() as i64, cy.max(914_400.0).round() as i64)
+}
+
+/// Replaces the first `<tag … />` after `from` in `xml` with `with`; `None` if there is none.
+fn replace_tag(xml: &str, from: usize, tag: &str, with: &str) -> Option<(String, usize)> {
+    let start = from + xml[from..].find(&format!("<{tag} "))?;
+    let end = start + xml[start..].find("/>")? + 2;
+    Some((format!("{}{with}{}", &xml[..start], &xml[end..]), start + with.len()))
+}
+
+/// pandoc lays every page out at a modest size inside a 16:9 content area. This sizes the
+/// slides to the first page's aspect ratio and makes each page's picture fill its slide
+/// (letterboxed if a page has another shape). Left as pandoc wrote it if the XML is unexpected.
+fn fill_slides(pptx: &[u8], pages: &[(u32, u32)]) -> Result<Vec<u8>> {
+    use std::io::{Read, Write};
+    let bad = |e: zip::result::ZipError| EngineError::Pdfium(format!("pandoc wrote an unreadable PowerPoint file: {e}"));
+    let (cx, cy) = slide_size(pages.first().map_or(16, |p| p.0), pages.first().map_or(9, |p| p.1));
+    let mut archive = zip::ZipArchive::new(Cursor::new(pptx)).map_err(bad)?;
+    let mut out = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    for i in 0..archive.len() {
+        let name = archive.by_index_raw(i).map_err(bad)?.name().map_err(bad)?.into_owned();
+        let slide = name.strip_prefix("ppt/slides/slide").and_then(|n| n.strip_suffix(".xml")).and_then(|n| n.parse::<usize>().ok());
+        let edited = if name == "ppt/presentation.xml" || slide.is_some() {
+            let mut xml = String::new();
+            archive.by_index(i).map_err(bad)?.read_to_string(&mut xml)?;
+            if name == "ppt/presentation.xml" {
+                replace_tag(&xml, 0, "p:sldSz", &format!(r#"<p:sldSz cx="{cx}" cy="{cy}" />"#)).map(|r| r.0)
+            } else {
+                let (w, h) = pages.get(slide.unwrap_or(1).saturating_sub(1)).map_or((cx, cy), |p| (i64::from(p.0), i64::from(p.1)));
+                let scale = (cx as f64 / w as f64).min(cy as f64 / h as f64);
+                let (ew, eh) = ((w as f64 * scale).round() as i64, (h as f64 * scale).round() as i64);
+                xml.find("<p:pic>")
+                    .and_then(|pic| replace_tag(&xml, pic, "a:off", &format!(r#"<a:off x="{}" y="{}" />"#, (cx - ew) / 2, (cy - eh) / 2)))
+                    .and_then(|(x, at)| replace_tag(&x, at, "a:ext", &format!(r#"<a:ext cx="{ew}" cy="{eh}" />"#)))
+                    .map(|r| r.0)
+            }
+        } else {
+            None
+        };
+        match edited {
+            Some(xml) => {
+                out.start_file(&name, zip::write::SimpleFileOptions::default()).map_err(bad)?;
+                out.write_all(xml.as_bytes())?;
+            }
+            None => out.raw_copy_file(archive.by_index_raw(i).map_err(bad)?).map_err(bad)?,
+        }
+    }
+    Ok(out.finish().map_err(bad)?.into_inner())
+}
+
+/// PDF -> PowerPoint: one slide per page, each page rendered at 150 DPI and filling its slide
+/// (slides take the first page's aspect ratio). pandoc builds the deck.
+fn to_pptx(library: &Path, pandoc: &Path, timeout: std::time::Duration, input: &Path) -> Result<PathBuf> {
+    let input = std::path::absolute(input)?;
+    let work = crate::documents::WorkDir::create()?;
+    let mut sizes = Vec::new();
+    let mut slides = Vec::new();
+    render_pages(library, &input, SLIDE_DPI, |i, _, image| {
+        let name = format!("page-{:04}.png", i + 1);
+        image.save_with_format(work.0.join(&name), ImageFormat::Png)?;
+        sizes.push((image.width(), image.height()));
+        slides.push(format!("![]({name})"));
+        Ok(())
+    })?;
+    std::fs::write(work.0.join("slides.md"), slides.join("\n\n---\n\n"))?;
+    tool_output(&input, "pptx", |output| {
+        let args: [&std::ffi::OsStr; 7] = [
+            "--from".as_ref(), "markdown-implicit_figures".as_ref(), "--to".as_ref(), "pptx".as_ref(),
+            "--output".as_ref(), output.as_os_str(), "slides.md".as_ref(),
+        ];
+        crate::tools::run("pandoc", pandoc, args, Some(&work.0), timeout)?;
+        let filled = fill_slides(&std::fs::read(output)?, &sizes)?;
+        Ok(std::fs::write(output, filled)?)
+    })
+}
+
+/// A line of text as pdfium lays it out (PDF points, y up).
+#[derive(Debug, Clone, PartialEq)]
+struct Line {
+    text: String,
+    size: f32,
+    bold: bool,
+    top: f32,
+    bottom: f32,
+}
+
+/// pdfium's text with its markers made readable: U+0002 is a hyphen that ended a line (pdfium
+/// reports it apart from a typed hyphen); other control characters except tab/newline go.
+fn clean_text(s: &str) -> String {
+    s.chars().filter_map(|c| match c {
+        '\u{2}' => Some('-'),
+        '\t' | '\n' => Some(c),
+        c if c.is_control() => None,
+        c => Some(c),
+    }).collect()
+}
+
+/// The lines of a page, top to bottom: pdfium's text segments joined when they share a line.
+fn page_lines(page: &pdfium_render::prelude::PdfPage) -> Result<Vec<Line>> {
+    use pdfium_render::prelude::PdfFontWeight as W;
+    let text = page.text().map_err(pdfium_error)?;
+    let mut runs = Vec::new();
+    for segment in text.segments().iter() {
+        let s = clean_text(&segment.text());
+        if s.trim().is_empty() {
+            continue;
+        }
+        let b = segment.bounds();
+        let chars = segment.chars().map_err(pdfium_error)?;
+        let first = chars.iter().find(|c| c.unicode_char().is_some_and(|c| !c.is_whitespace()));
+        let size = first.as_ref().map_or(b.height().value, |c| c.scaled_font_size().value);
+        let bold = first.as_ref().is_some_and(|c| {
+            matches!(c.font_weight(), Some(W::Weight600 | W::Weight700Bold | W::Weight800 | W::Weight900))
+                || matches!(c.font_weight(), Some(W::Custom(n)) if n >= 600)
+                || c.font_name().to_ascii_lowercase().contains("bold")
+        });
+        runs.push((b.left().value, Line { text: s, size, bold, top: b.top().value, bottom: b.bottom().value }));
+    }
+    runs.sort_by(|a, b| b.1.top.total_cmp(&a.1.top).then(a.0.total_cmp(&b.0)));
+    let mut lines: Vec<(f32, Line)> = Vec::new();
+    for (left, run) in runs {
+        let mid = (run.top + run.bottom) / 2.0;
+        match lines.last_mut() {
+            Some((_, line)) if mid <= line.top && mid >= line.bottom => {
+                line.text.push(' ');
+                line.text.push_str(run.text.trim());
+                line.size = line.size.max(run.size);
+                line.bold &= run.bold;
+                line.bottom = line.bottom.min(run.bottom);
+            }
+            _ => lines.push((left, Line { text: run.text.trim().to_string(), ..run })),
+        }
+    }
+    Ok(lines.into_iter().map(|(_, l)| l).collect())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Block {
+    Heading(u8),
+    Bullet,
+    Numbered,
+    Text,
+}
+
+/// `(numbered, rest)` if a line starts with a list marker (`•`, `-`, `1.`, `2)`, ...).
+fn list_marker(text: &str) -> Option<(bool, &str)> {
+    let t = text.trim_start();
+    for b in ['•', '◦', '▪', '‣', '●', '-', '–', '*'] {
+        if let Some(rest) = t.strip_prefix(b) {
+            return rest.starts_with(char::is_whitespace).then(|| (false, rest.trim_start()));
+        }
+    }
+    let digits = t.find(|c: char| !c.is_ascii_digit()).unwrap_or(0);
+    let rest = t.get(digits..)?;
+    (1..=3).contains(&digits)
+        .then(|| rest.strip_prefix(['.', ')']))
+        .flatten()
+        .filter(|r| r.starts_with(char::is_whitespace))
+        .map(|r| (true, r.trim_start()))
+}
+
+/// A running page number: only digits (or "Page 3", "3 of 9", "3 / 9") near the top/bottom edge.
+fn is_page_number(line: &Line, page_height: f32) -> bool {
+    let near_edge = line.bottom < page_height * 0.08 || line.top > page_height * 0.92;
+    let t = line.text.trim().to_ascii_lowercase();
+    let t = t.strip_prefix("page").unwrap_or(&t).trim();
+    let numeric = |s: &str| !s.is_empty() && s.trim().chars().all(|c| c.is_ascii_digit());
+    let whole = numeric(t)
+        || t.split_once(" of ").is_some_and(|(a, b)| numeric(a) && numeric(b))
+        || t.split_once('/').is_some_and(|(a, b)| numeric(a) && numeric(b));
+    near_edge && whole
+}
+
+/// Backslash-escapes every ASCII punctuation character, so text never reads as Markdown syntax.
+fn escape_markdown(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        if c.is_ascii_punctuation() {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out
+}
+
+/// Rebuilds document structure from laid-out lines (`(page height, lines)` per page):
+/// - body size = the font size of most of the text; lines ≥ 1.6× / 1.3× / 1.12× of it are
+///   headings 1/2/3, as is a lone short bold line;
+/// - lines starting with a bullet or `1.` are list items (wrapped lines continue them);
+/// - lines join into a paragraph while the gap between them stays under ~0.6 em and the size
+///   doesn't change; a page break ends a paragraph; a word hyphenated across lines is rejoined;
+/// - running page numbers at the page edges are dropped.
+fn lines_to_markdown(pages: &[(f32, Vec<Line>)]) -> String {
+    let mut sizes: Vec<(f32, usize)> = pages.iter().flat_map(|(_, ls)| ls.iter().map(|l| (l.size, l.text.chars().count()))).collect();
+    sizes.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let total: usize = sizes.iter().map(|s| s.1).sum();
+    let mut seen = 0;
+    let body = sizes.iter().find(|s| {
+        seen += s.1;
+        seen * 2 >= total
+    });
+    let body = body.map_or(12.0, |s| s.0).max(1.0);
+
+    // (kind, text, line count, all bold)
+    let mut blocks: Vec<(Block, String, usize, bool)> = Vec::new();
+    for (height, lines) in pages {
+        let mut prev: Option<&Line> = None;
+        for line in lines.iter().filter(|l| !is_page_number(l, *height)) {
+            let ratio = line.size / body;
+            let marker = list_marker(&line.text);
+            let kind = match (ratio, marker) {
+                (r, _) if r >= 1.6 => Block::Heading(1),
+                (r, _) if r >= 1.3 => Block::Heading(2),
+                (r, _) if r >= 1.12 => Block::Heading(3),
+                (_, Some((true, _))) => Block::Numbered,
+                (_, Some((false, _))) => Block::Bullet,
+                _ => Block::Text,
+            };
+            let text = marker.filter(|_| matches!(kind, Block::Bullet | Block::Numbered)).map_or(line.text.trim(), |m| m.1);
+            let joins = prev.zip(blocks.last()).is_some_and(|(p, last)| {
+                let close = p.bottom - line.top < 0.6 * p.size.max(line.size);
+                let same_size = (p.size - line.size).abs() <= 0.1 * p.size.max(line.size);
+                close && match (kind, last.0) {
+                    (Block::Text, Block::Text | Block::Bullet | Block::Numbered) => same_size,
+                    (Block::Heading(a), Block::Heading(b)) => a == b,
+                    _ => false,
+                }
+            });
+            match blocks.last_mut() {
+                Some(last) if joins => {
+                    let hyphenated = last.1.ends_with('-') && text.starts_with(char::is_lowercase)
+                        && last.1.chars().rev().nth(1).is_some_and(char::is_alphabetic);
+                    if hyphenated {
+                        last.1.pop();
+                    } else {
+                        last.1.push(' ');
+                    }
+                    last.1.push_str(text);
+                    last.2 += 1;
+                    last.3 &= line.bold;
+                }
+                _ => blocks.push((kind, text.to_string(), 1, line.bold)),
+            }
+            prev = Some(line);
+        }
+    }
+
+    let mut out = String::new();
+    let mut last: Option<Block> = None;
+    for (kind, text, lines, bold) in blocks {
+        let lead_in = kind == Block::Text && lines == 1 && bold && text.chars().count() < 80 && !text.ends_with(['.', ',', ':', ';']);
+        let kind = if lead_in { Block::Heading(3) } else { kind };
+        let tight = matches!((last, kind), (Some(Block::Bullet), Block::Bullet) | (Some(Block::Numbered), Block::Numbered));
+        if !out.is_empty() {
+            out.push_str(if tight { "\n" } else { "\n\n" });
+        }
+        match kind {
+            Block::Heading(n) => out.push_str(&format!("{} {}", "#".repeat(usize::from(n)), escape_markdown(&text))),
+            Block::Bullet => out.push_str(&format!("- {}", escape_markdown(&text))),
+            Block::Numbered => out.push_str(&format!("1. {}", escape_markdown(&text))),
+            Block::Text => out.push_str(&escape_markdown(&text)),
+        }
+        last = Some(kind);
+    }
+    out + "\n"
+}
+
+/// PDF -> Word as editable text: structure rebuilt from the text layout (see
+/// [`lines_to_markdown`]), then pandoc writes the DOCX. Images and tables are not carried over.
+fn to_docx_text(library: &Path, pandoc: &Path, timeout: std::time::Duration, input: &Path) -> Result<PathBuf> {
+    if !input.is_file() {
+        return Err(EngineError::InputNotFound(input.to_path_buf()));
+    }
+    let input = std::path::absolute(input)?;
+    let doc = pdfium(library)?.load_pdf_from_file(&input, None).map_err(pdfium_error)?;
+    let mut pages = Vec::new();
+    for page in doc.pages().iter() {
+        pages.push((page.height().value, page_lines(&page)?));
+    }
+    if pages.iter().all(|(_, lines)| lines.is_empty()) {
+        return Err(EngineError::Empty("the PDF has no text layer (scanned pages would need OCR)".into()));
+    }
+    let work = crate::documents::WorkDir::create()?;
+    std::fs::write(work.0.join("text.md"), lines_to_markdown(&pages))?;
+    tool_output(&input, "docx", |output| {
+        let args: [&std::ffi::OsStr; 7] = [
+            "--from".as_ref(), "markdown".as_ref(), "--to".as_ref(), "docx".as_ref(),
+            "--output".as_ref(), output.as_os_str(), "text.md".as_ref(),
+        ];
+        crate::tools::run("pandoc", pandoc, args, Some(&work.0), timeout).map(drop)
+    })
 }
 
 // ---- converter ---------------------------------------------------------------------------
 
 pub struct PdfConverter {
     pdfium: Option<PathBuf>,
+    pandoc: Option<PathBuf>,
+    timeout: std::time::Duration,
 }
 
 impl PdfConverter {
     pub fn new(config: &EngineConfig) -> Self {
-        Self { pdfium: config.pdfium_path.clone().filter(|p| p.is_file()) }
+        Self {
+            pdfium: config.pdfium_path.clone().filter(|p| p.is_file()),
+            pandoc: config.pandoc_path.clone().filter(|p| crate::tools::is_executable(p)),
+            timeout: config.tool_timeout,
+        }
+    }
+
+    /// pdfium and pandoc, for the conversions that render or read pages and let pandoc write.
+    fn office_tools(&self) -> Result<(&Path, &Path)> {
+        let pdfium = self.pdfium.as_deref().ok_or_else(|| EngineError::ToolMissing("pdfium".into()))?;
+        let pandoc = self.pandoc.as_deref().ok_or_else(|| EngineError::ToolMissing("pandoc".into()))?;
+        Ok((pdfium, pandoc))
     }
 }
 
@@ -973,6 +1321,8 @@ impl Converter for PdfConverter {
             catalog::op("pdf.to_text")
                 .with_children(vec![op("pdf.to_text.txt", "Plain text", "Text"), op("pdf.to_text.md", "Markdown", "FileCode")])
                 .available(render),
+            catalog::op("pdf.to_pptx").available(render && self.pandoc.is_some()),
+            catalog::op("pdf.to_docx").available(render && self.pandoc.is_some()),
         ]
     }
 
@@ -1020,6 +1370,14 @@ impl Converter for PdfConverter {
                 let library = self.pdfium.as_deref().ok_or_else(|| EngineError::ToolMissing("pdfium".into()))?;
                 inputs.iter().map(|i| to_text(library, i, markdown)).collect()
             }
+            Action::ToPptx => {
+                let (pdfium, pandoc) = self.office_tools()?;
+                inputs.iter().map(|i| to_pptx(pdfium, pandoc, self.timeout, i)).collect()
+            }
+            Action::ToDocx => {
+                let (pdfium, pandoc) = self.office_tools()?;
+                inputs.iter().map(|i| to_docx_text(pdfium, pandoc, self.timeout, i)).collect()
+            }
             Action::Compress(preset) => inputs.iter().map(|i| compress(i, preset)).collect(),
             Action::PageNumbers(corner) => inputs.iter().map(|i| page_numbers(i, corner)).collect(),
             Action::Watermark(text) => inputs.iter().map(|i| watermark(i, &text)).collect(),
@@ -1038,7 +1396,7 @@ mod tests {
     }
 
     fn run(id: &str, inputs: &[PathBuf]) -> Result<Vec<PathBuf>> {
-        run_with(&PdfConverter { pdfium: None }, id, inputs, &[])
+        run_with(&PdfConverter::new(&EngineConfig::default()), id, inputs, &[])
     }
 
     /// A PDF whose pages say `{label}1`, `{label}2`, ... and draw a red square at the bottom
@@ -1179,7 +1537,7 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let input = make_pdf(&d.path().join("five.pdf"), "P", 5, 0);
         let one = |id: &str, opts: &[(&str, &str)]| {
-            let out = run_with(&PdfConverter { pdfium: None }, id, std::slice::from_ref(&input), opts).unwrap();
+            let out = run_with(&PdfConverter::new(&EngineConfig::default()), id, std::slice::from_ref(&input), opts).unwrap();
             labels(&out[0])
         };
         assert_eq!(one("pdf.extract.1", &[]), ["P1"]);
@@ -1305,7 +1663,7 @@ mod tests {
 
     #[test]
     fn operations_and_batch_operations() {
-        let without = PdfConverter { pdfium: None };
+        let without = PdfConverter::new(&EngineConfig::default());
         let ids = |ops: Vec<Operation>| ops.into_iter().map(|o| (o.id, o.available)).collect::<Vec<_>>();
         assert_eq!(
             ids(without.operations(PDF)),
@@ -1318,10 +1676,12 @@ mod tests {
                 ("pdf.page_numbers".into(), true),
                 ("pdf.watermark".into(), true),
                 ("pdf.to_text".into(), false),
+                ("pdf.to_pptx".into(), false),
+                ("pdf.to_docx".into(), false),
             ]
         );
         let exe = std::env::current_exe().unwrap();
-        let with = PdfConverter::new(&EngineConfig { pdfium_path: Some(exe), ..EngineConfig::default() });
+        let with = PdfConverter::new(&EngineConfig { pdfium_path: Some(exe.clone()), pandoc_path: Some(exe), ..EngineConfig::default() });
         assert!(with.operations(PDF).iter().all(|o| o.available));
         assert!(without.operations("image/png").is_empty());
 
@@ -1526,7 +1886,7 @@ mod tests {
         assert_eq!(out, d.path().join("doc (watermarked).pdf"));
         let text = page_text(&out, 1);
         assert!(text.contains("(CONFIDENTIAL) Tj") && text.contains("/RpAlpha1 gs"), "{text}");
-        let custom = run_with(&PdfConverter { pdfium: None }, "pdf.watermark", &[input], &[("text", "Q3 (draft)")]).unwrap().remove(0);
+        let custom = run_with(&PdfConverter::new(&EngineConfig::default()), "pdf.watermark", &[input], &[("text", "Q3 (draft)")]).unwrap().remove(0);
         assert!(page_text(&custom, 1).contains(r"(Q3 \(draft\)) Tj"));
     }
 
@@ -1581,5 +1941,156 @@ mod tests {
         RgbImage::from_pixel(20, 20, Rgb([9, 9, 9])).save(&png).unwrap();
         let scan = run("pdf.from_images.original", &[png]).unwrap().remove(0);
         assert!(matches!(run_with(&c, "pdf.to_text.txt", &[scan], &[]), Err(EngineError::Empty(_))));
+    }
+
+    // ---- PDF -> PowerPoint / Word -------------------------------------------------------
+
+    fn line(text: &str, size: f32, bold: bool, top: f32) -> Line {
+        Line { text: text.into(), size, bold, top, bottom: top - size }
+    }
+
+    #[test]
+    fn structure_is_rebuilt_from_layout() {
+        let page = vec![
+            line("Annual Report", 24.0, true, 760.0),
+            line("Overview", 16.0, false, 720.0),
+            line("The first paragraph starts here and is con-", 12.0, false, 690.0),
+            line("tinued on the second line.", 12.0, false, 676.0),
+            line("A second paragraph with *stars* and #hash.", 12.0, false, 640.0),
+            line("Key points", 12.0, true, 610.0),
+            line("• Fast", 12.0, false, 590.0),
+            line("wrapping onto a second line", 12.0, false, 576.0),
+            line("• Local", 12.0, false, 562.0),
+            line("1. First", 12.0, false, 530.0),
+            line("2) Second", 12.0, false, 516.0),
+            line("3", 10.0, false, 30.0), // running page number
+        ];
+        let next = vec![line("Page 2 of 9", 10.0, false, 785.0), line("Last words.", 12.0, false, 700.0)];
+        assert_eq!(
+            lines_to_markdown(&[(792.0, page), (792.0, next)]),
+            "# Annual Report\n\n## Overview\n\n\
+             The first paragraph starts here and is continued on the second line\\.\n\n\
+             A second paragraph with \\*stars\\* and \\#hash\\.\n\n\
+             ### Key points\n\n\
+             - Fast wrapping onto a second line\n- Local\n\n\
+             1\\. First\n\n\
+             1. Second\n\n\
+             Last words\\.\n"
+                .replace("1\\. First\n\n1. Second", "1. First\n1. Second")
+        );
+    }
+
+    #[test]
+    fn list_markers_and_page_numbers() {
+        assert_eq!(list_marker("• item"), Some((false, "item")));
+        assert_eq!(list_marker("12) item"), Some((true, "item")));
+        assert_eq!(list_marker("-5 degrees"), None);
+        assert_eq!(list_marker("2026. A year"), None, "four digits is a year, not a list");
+        assert!(is_page_number(&line("12", 10.0, false, 30.0), 792.0));
+        assert!(is_page_number(&line("Page 3 / 9", 10.0, false, 785.0), 792.0));
+        assert!(!is_page_number(&line("12", 10.0, false, 400.0), 792.0), "not at an edge");
+        assert!(!is_page_number(&line("Chapter 12", 10.0, false, 30.0), 792.0));
+    }
+
+    #[test]
+    fn slides_take_the_page_aspect() {
+        assert_eq!(slide_size(300, 200), (9_144_000, 6_096_000));
+        assert_eq!(slide_size(200, 300), (6_096_000, 9_144_000));
+        assert_eq!(slide_size(1000, 10), (9_144_000, 914_400), "at least an inch");
+    }
+
+    /// pdfium and pandoc (PATH or fetched sidecar), or `None` to skip.
+    fn office() -> Option<PdfConverter> {
+        let mut c = renderer()?;
+        c.pandoc = crate::tools::for_tests("pandoc");
+        if c.pandoc.is_none() {
+            eprintln!("skipping: pandoc not found");
+        }
+        c.pandoc.is_some().then_some(c)
+    }
+
+    fn zip_entry(path: &Path, name: &str) -> String {
+        use std::io::Read;
+        let mut z = zip::ZipArchive::new(std::fs::File::open(path).unwrap()).unwrap();
+        let mut s = String::new();
+        z.by_name(name).unwrap().read_to_string(&mut s).unwrap();
+        s
+    }
+
+    #[test]
+    fn pdf_to_pptx_fills_one_slide_per_page() {
+        let Some(c) = office() else { return };
+        let d = tempfile::tempdir().unwrap();
+        let input = make_pdf(&d.path().join("deck.pdf"), "S", 2, 0);
+        let out = run_with(&c, "pdf.to_pptx", &[input], &[]).unwrap().remove(0);
+        assert_eq!(out, d.path().join("deck (converted).pptx"));
+        // 300 x 200 pt at 150 DPI renders as 625 x 417 px.
+        let (cx, cy) = slide_size(625, 417);
+        assert!(zip_entry(&out, "ppt/presentation.xml").contains(&format!(r#"<p:sldSz cx="{cx}" cy="{cy}" />"#)));
+        for n in 1..=2 {
+            let slide = zip_entry(&out, &format!("ppt/slides/slide{n}.xml"));
+            assert!(slide.contains(&format!(r#"<a:off x="0" y="0" /><a:ext cx="{cx}" cy="{cy}" />"#)), "{slide}");
+        }
+        let media = zip::ZipArchive::new(std::fs::File::open(&out).unwrap()).unwrap().file_names().filter(|n| n.as_ref().is_ok_and(|n| n.starts_with("ppt/media/"))).count();
+        assert_eq!(media, 2);
+    }
+
+    /// A Letter page: a 24 pt bold title, a paragraph hyphenated across two lines, a bold
+    /// lead-in, two bullets and a page number at the bottom.
+    fn report_pdf(path: &Path) -> PathBuf {
+        let mut doc = Document::with_version("1.5");
+        let regular = doc.add_object(dictionary! { "Type" => "Font", "Subtype" => "Type1", "BaseFont" => "Helvetica" });
+        let bold = doc.add_object(dictionary! { "Type" => "Font", "Subtype" => "Type1", "BaseFont" => "Helvetica-Bold" });
+        let content = "BT /F2 24 Tf 72 700 Td (Annual Report) Tj ET \
+            BT /F1 12 Tf 72 660 Td (The first paragraph starts here and is con-) Tj 0 -14 Td (tinued on the second line.) Tj ET \
+            BT /F2 12 Tf 72 610 Td (Key points) Tj ET \
+            BT /F1 12 Tf 72 585 Td (- Fast) Tj 0 -14 Td (- Local) Tj ET \
+            BT /F1 10 Tf 300 30 Td (1) Tj ET";
+        let pages_id = doc.new_object_id();
+        let contents = doc.add_object(Stream::new(dictionary! {}, content.as_bytes().to_vec()));
+        let page = doc.add_object(dictionary! {
+            "Type" => "Page", "Parent" => pages_id, "Contents" => contents,
+            "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+            "Resources" => dictionary! { "Font" => dictionary! { "F1" => regular, "F2" => bold } },
+        });
+        doc.objects.insert(pages_id, Object::Dictionary(dictionary! { "Type" => "Pages", "Kids" => vec![page.into()], "Count" => 1 }));
+        let catalog = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages_id });
+        doc.trailer.set("Root", catalog);
+        doc.save(path).unwrap();
+        path.to_path_buf()
+    }
+
+    #[test]
+    fn pdf_layout_is_read_back_as_structure() {
+        let Some(c) = renderer() else { return };
+        let d = tempfile::tempdir().unwrap();
+        let input = report_pdf(&d.path().join("report.pdf"));
+        let doc = pdfium(c.pdfium.as_deref().unwrap()).unwrap().load_pdf_from_file(&input, None).unwrap();
+        let page = doc.pages().get(0).unwrap();
+        let md = lines_to_markdown(&[(page.height().value, page_lines(&page).unwrap())]);
+        assert_eq!(
+            md,
+            "# Annual Report\n\nThe first paragraph starts here and is continued on the second line\\.\n\n### Key points\n\n- Fast\n- Local\n"
+        );
+    }
+
+    #[test]
+    fn pdf_to_word_as_editable_text() {
+        let Some(c) = office() else { return };
+        let d = tempfile::tempdir().unwrap();
+        let input = report_pdf(&d.path().join("report.pdf"));
+        let out = run_with(&c, "pdf.to_docx", &[input], &[]).unwrap().remove(0);
+        assert_eq!(out, d.path().join("report (converted).docx"));
+        let body = zip_entry(&out, "word/document.xml");
+        assert!(body.contains(r#"<w:pStyle w:val="Heading1" />"#) && body.contains("Annual Report"), "{body}");
+        assert!(body.contains("is continued on the second line."));
+        assert!(body.contains("<w:numPr>"), "bullets are a real list");
+        assert!(!body.contains(r#"<w:t xml:space="preserve">1</w:t>"#) && !body.contains("<w:t>1</w:t>"), "page number dropped");
+
+        let png = d.path().join("scan.png");
+        RgbImage::from_pixel(20, 20, Rgb([9, 9, 9])).save(&png).unwrap();
+        let scan = run("pdf.from_images.original", &[png]).unwrap().remove(0);
+        assert!(matches!(run_with(&c, "pdf.to_docx", &[scan], &[]), Err(EngineError::Empty(_))));
+        assert!(matches!(run("pdf.to_pptx", &[d.path().join("report.pdf")]), Err(EngineError::ToolMissing(_))));
     }
 }

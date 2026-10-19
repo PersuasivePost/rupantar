@@ -122,9 +122,10 @@ function mockOperations(mime: string): Operation[] {
 /** Marks operations unavailable the way the engine does when a tool is missing. */
 function withAvailability(ops: Operation[]): Operation[] {
   const needs = (id: string) =>
-    (id.startsWith("doc.") && !mockTools.pandoc) ||
+    ((id.startsWith("doc.") && id !== "doc.extract_images") && !mockTools.pandoc) ||
+    (/^pdf\.to_(pptx|docx)$/.test(id) && !mockTools.pandoc) ||
     (id === "doc.to_pdf" && !mockTools.typst) ||
-    (/^pdf\.to_(image|png|jpg|text)/.test(id) && !mockTools.pdfium);
+    (/^pdf\.to_(image|png|jpg|text|pptx|docx)/.test(id) && !mockTools.pdfium);
   // The snapshot is taken with every tool present, so `available: false` there means planned.
   return ops.map((o) => ({
     ...o,

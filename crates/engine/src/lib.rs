@@ -455,8 +455,8 @@ mod tests {
         assert_eq!(
             visible(&r.operations(mime::PDF)),
             [
-                "pdf.compress", "pdf.to_image", "pdf.split", "pdf.rotate", "pdf.extract", "pdf.to_text", "pdf.watermark",
-                "pdf.page_numbers", "copy",
+                "pdf.compress", "pdf.to_docx", "pdf.to_image", "pdf.split", "pdf.rotate", "pdf.extract", "pdf.to_pptx",
+                "pdf.to_text", "pdf.watermark", "pdf.page_numbers", "copy",
             ]
         );
         assert_eq!(
@@ -470,7 +470,10 @@ mod tests {
             visible(&r.operations(mime::DOCX)),
             ["doc.to_pdf", "doc.to_md", "doc.extract_images", "doc.to_odt", "doc.to_epub", "copy"]
         );
-        assert_eq!(visible(&r.operations(mime::MARKDOWN)), ["doc.to_pdf", "doc.to_docx", "doc.to_html", "doc.to_epub", "copy"]);
+        assert_eq!(
+            visible(&r.operations(mime::MARKDOWN)),
+            ["doc.to_pdf", "doc.to_docx", "doc.to_html", "doc.to_slides", "doc.to_epub", "copy"]
+        );
         assert_eq!(visible(&r.operations(mime::HTML)), ["doc.to_pdf", "doc.to_docx", "doc.to_md", "copy"]);
         for m in [mime::PPTX, mime::PPT, mime::ODP, mime::DOC, mime::ODT] {
             assert_eq!(visible(&r.operations(m)), ["copy"], "{m}: nothing implemented yet");

@@ -2,8 +2,8 @@
 //! (`--pdf-engine=typst`, no LaTeX).
 //!
 //! Operation ids are `doc.to_<format>`: `doc.to_md`, `doc.to_docx`, `doc.to_html`, `doc.to_odt`,
-//! `doc.to_epub`, `doc.to_pdf`. Offered: DOCX -> MD / ODT / EPUB / PDF, MD -> DOCX / HTML /
-//! EPUB / PDF, HTML -> MD / DOCX / PDF. Every operation is listed but marked unavailable when
+//! `doc.to_epub`, `doc.to_pdf`, `doc.to_slides` (PowerPoint). Offered: DOCX -> MD / ODT / EPUB /
+//! PDF, MD -> DOCX / HTML / EPUB / PDF / slides, HTML -> MD / DOCX / PDF. Every operation is listed but marked unavailable when
 //! pandoc is missing; PDF also needs typst.
 //!
 //! DOCX -> MD extracts embedded images into a `name_media` folder next to the output (pandoc
@@ -32,6 +32,7 @@ enum Format {
     Odt,
     Epub,
     Pdf,
+    Pptx,
 }
 
 use Format::*;
@@ -49,9 +50,9 @@ impl Format {
     fn targets(self) -> &'static [Format] {
         match self {
             Docx => &[Markdown, Odt, Epub, Pdf],
-            Markdown => &[Docx, Html, Epub, Pdf],
+            Markdown => &[Docx, Html, Epub, Pdf, Pptx],
             Html => &[Markdown, Docx, Pdf],
-            Odt | Epub | Pdf => &[],
+            Odt | Epub | Pdf | Pptx => &[],
         }
     }
 
@@ -64,11 +65,12 @@ impl Format {
             Odt => ("doc.to_odt", "ODT", "odt"),
             Epub => ("doc.to_epub", "EPUB", "epub"),
             Pdf => ("doc.to_pdf", "PDF", "pdf"),
+            Pptx => ("doc.to_slides", "PowerPoint", "pptx"),
         }
     }
 
     fn from_id(id: &str) -> Option<Format> {
-        [Markdown, Docx, Html, Odt, Epub, Pdf].into_iter().find(|f| f.meta().0 == id)
+        [Markdown, Docx, Html, Odt, Epub, Pdf, Pptx].into_iter().find(|f| f.meta().0 == id)
     }
 
     /// pandoc's reader / writer name. PDF is written as typst source and compiled (`to_pdf`).
@@ -80,6 +82,7 @@ impl Format {
             Odt => "odt",
             Epub => "epub",
             Pdf => "typst",
+            Pptx => "pptx",
         }
     }
 }
@@ -218,10 +221,10 @@ fn create_unique_dir(dir: &Path, name: impl Fn(u32) -> String) -> Result<PathBuf
 }
 
 /// A private folder in the temp dir for one conversion (filter, intermediate files); removed on drop.
-struct WorkDir(PathBuf);
+pub(crate) struct WorkDir(pub(crate) PathBuf);
 
 impl WorkDir {
-    fn create() -> Result<Self> {
+    pub(crate) fn create() -> Result<Self> {
         let pid = std::process::id();
         create_unique_dir(&std::env::temp_dir(), |n| format!("rupantar-{pid}-{n}")).map(WorkDir)
     }
@@ -291,11 +294,12 @@ mod tests {
         DocumentConverter::new(&EngineConfig { pandoc_path: pandoc, typst_path: typst, ..EngineConfig::default() })
     }
 
-    /// pandoc (and typst) from PATH, or `None` to skip: these tests need the real tools.
+    /// pandoc (and typst) from PATH or the fetched sidecars, or `None` to skip: these tests
+    /// need the real tools.
     fn real() -> Option<DocumentConverter> {
-        let c = DocumentConverter::new(&EngineConfig::locate(&[]));
+        let c = converter(tools::for_tests("pandoc"), tools::for_tests("typst"));
         if c.pandoc.is_none() {
-            eprintln!("skipping: pandoc not on PATH");
+            eprintln!("skipping: pandoc not found");
             return None;
         }
         Some(c)
@@ -352,7 +356,7 @@ mod tests {
         let c = converter(None, None);
         let ids = |m: &str| c.operations(m).into_iter().map(|o| o.id).collect::<Vec<_>>();
         assert_eq!(ids(DOCX), ["doc.to_md", "doc.to_odt", "doc.to_epub", "doc.to_pdf"]);
-        assert_eq!(ids(MARKDOWN), ["doc.to_docx", "doc.to_html", "doc.to_epub", "doc.to_pdf"]);
+        assert_eq!(ids(MARKDOWN), ["doc.to_docx", "doc.to_html", "doc.to_epub", "doc.to_pdf", "doc.to_slides"]);
         assert_eq!(ids(HTML), ["doc.to_md", "doc.to_docx", "doc.to_pdf"]);
         assert!(ids("image/png").is_empty());
         assert!(!c.can_handle("application/pdf"));
@@ -368,7 +372,13 @@ mod tests {
         assert!(avail(&converter(None, Some(exe.clone()))).iter().all(|(_, a)| !a));
         assert_eq!(
             avail(&converter(Some(exe.clone()), None)),
-            [("doc.to_docx".into(), true), ("doc.to_html".into(), true), ("doc.to_epub".into(), true), ("doc.to_pdf".into(), false)]
+            [
+                ("doc.to_docx".into(), true),
+                ("doc.to_html".into(), true),
+                ("doc.to_epub".into(), true),
+                ("doc.to_pdf".into(), false),
+                ("doc.to_slides".into(), true),
+            ]
         );
         assert!(avail(&converter(Some(exe.clone()), Some(exe))).iter().all(|(_, a)| *a));
         let gone = PathBuf::from("/definitely/not/pandoc");
@@ -524,10 +534,22 @@ mod tests {
     }
 
     #[test]
+    fn markdown_to_slides() {
+        let Some(c) = real() else { return };
+        let d = tempfile::tempdir().unwrap();
+        let md = d.path().join("talk.md");
+        std::fs::write(&md, "# Intro\n\nHello there\n\n# Plan\n\n- one\n- two\n").unwrap();
+        let out = run(&c, "doc.to_slides", &[md]).unwrap().remove(0);
+        assert_eq!(out, d.path().join("talk (converted).pptx"));
+        assert!(zip_text(&out, "ppt/slides/slide2.xml").contains("Plan"));
+        assert!(zip_text(&out, "ppt/slides/slide2.xml").contains("two"));
+    }
+
+    #[test]
     fn md_and_docx_to_pdf_via_typst() {
         let Some(c) = real() else { return };
         if c.typst.is_none() {
-            eprintln!("skipping: typst not on PATH");
+            eprintln!("skipping: typst not found");
             return;
         }
         let d = tempfile::tempdir().unwrap();
