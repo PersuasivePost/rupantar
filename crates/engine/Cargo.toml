@@ -7,6 +7,10 @@ edition = "2021"
 calamine = "0.37"
 csv = "1.4"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
+lopdf = { version = "0.45", default-features = false }
+# Dynamic binding only (the library is loaded at runtime from EngineConfig::pdfium_path).
+# pdfium_7881 must match the release pinned in scripts/fetch-pdfium.sh.
+pdfium-render = { version = "0.9.4", default-features = false, features = ["pdfium_7881", "image_025", "thread_safe"] }
 rust_xlsxwriter = "0.100"
 serde = { version = "1", features = ["derive"] }
 thiserror = "1"

@@ -141,7 +141,7 @@ fn flatten_on_white(img: &DynamicImage) -> RgbImage {
     out
 }
 
-fn encode(img: &DynamicImage, format: ImageFormat, quality: Option<u8>) -> Result<Vec<u8>> {
+pub(crate) fn encode(img: &DynamicImage, format: ImageFormat, quality: Option<u8>) -> Result<Vec<u8>> {
     let mut buf = Vec::new();
     match format {
         ImageFormat::Jpeg => {

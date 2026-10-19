@@ -17,14 +17,13 @@
 //! cells; anything a spreadsheet would mangle (leading zeros, a leading `+`, more than 15
 //! significant digits, exponents) stays text.
 
-use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use calamine::{open_workbook_auto, Data, ExcelDateTime, Range, Reader, SheetType};
 use rust_xlsxwriter::{Format, Workbook};
 
 use crate::mime::{CSV, ODS, XLS, XLSX};
-use crate::{create_unique, create_unique_sibling, Converter, EngineError, Operation, Options, Result};
+use crate::{create_unique, create_unique_sibling, write_all_or_nothing, Converter, EngineError, Operation, Options, Result};
 
 pub struct SheetConverter;
 
@@ -117,20 +116,6 @@ fn file_safe(name: &str) -> String {
         .map(|c| if c.is_control() || r#"<>:"/\|?*"#.contains(c) { '_' } else { c })
         .collect();
     cleaned.trim().trim_end_matches('.').to_string()
-}
-
-/// Creates every output or none: files written before a failure are removed.
-fn write_all_or_nothing(outputs: Vec<(std::fs::File, PathBuf, Vec<u8>)>) -> Result<Vec<PathBuf>> {
-    let paths: Vec<PathBuf> = outputs.iter().map(|(_, p, _)| p.clone()).collect();
-    for (mut file, _, bytes) in outputs {
-        if let Err(e) = file.write_all(&bytes) {
-            for p in &paths {
-                let _ = std::fs::remove_file(p);
-            }
-            return Err(e.into());
-        }
-    }
-    Ok(paths)
 }
 
 fn workbook_to_csv(input: &Path, delimiter: u8) -> Result<Vec<PathBuf>> {
@@ -291,7 +276,7 @@ impl Converter for SheetConverter {
 mod tests {
     use super::*;
     use calamine::{open_workbook, Xlsx};
-    use std::io::Read;
+    use std::io::{Read, Write};
 
     fn run(id: &str, inputs: &[PathBuf]) -> Result<Vec<PathBuf>> {
         run_with(id, inputs, &[])

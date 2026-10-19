@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
-use std::io::ErrorKind;
+use std::io::{ErrorKind, Write};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -12,6 +12,7 @@ pub mod copy;
 pub mod documents;
 pub mod images;
 pub mod mime;
+pub mod pdf;
 pub mod sheets;
 pub mod tools;
 
@@ -41,6 +42,10 @@ pub enum EngineError {
     Csv(#[from] csv::Error),
     #[error("xlsx error: {0}")]
     Xlsx(#[from] rust_xlsxwriter::XlsxError),
+    #[error("pdf error: {0}")]
+    Pdf(#[from] lopdf::Error),
+    #[error("pdf rendering failed: {0}")]
+    Pdfium(String),
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
 }
@@ -91,22 +96,27 @@ pub type Options = HashMap<String, String>;
 pub struct EngineConfig {
     pub pandoc_path: Option<PathBuf>,
     pub typst_path: Option<PathBuf>,
+    /// The pdfium shared library file (`libpdfium.so` / `libpdfium.dylib` / `pdfium.dll`),
+    /// loaded on first use to render PDF pages.
+    pub pdfium_path: Option<PathBuf>,
     /// Upper bound for one external tool run; the process is killed after this.
     pub tool_timeout: Duration,
 }
 
 impl Default for EngineConfig {
     fn default() -> Self {
-        Self { pandoc_path: None, typst_path: None, tool_timeout: Duration::from_secs(120) }
+        Self { pandoc_path: None, typst_path: None, pdfium_path: None, tool_timeout: Duration::from_secs(120) }
     }
 }
 
 impl EngineConfig {
-    /// Finds each tool in `dirs` (e.g. next to the executable, where Tauri puts sidecars), then on PATH.
+    /// Finds each tool in `dirs` (e.g. next to the executable, where Tauri puts sidecars), then
+    /// on PATH. pdfium is a library, so it is only looked for in `dirs`.
     pub fn locate(dirs: &[PathBuf]) -> Self {
         Self {
             pandoc_path: tools::find("pandoc", dirs),
             typst_path: tools::find("typst", dirs),
+            pdfium_path: pdf::find_pdfium(dirs),
             ..Self::default()
         }
     }
@@ -165,6 +175,7 @@ impl Registry {
         let mut r = Self::new();
         r.register(Box::new(images::ImageConverter));
         r.register(Box::new(sheets::SheetConverter));
+        r.register(Box::new(pdf::PdfConverter::new(config)));
         r.register(Box::new(documents::DocumentConverter::new(config)));
         r.register(Box::new(copy::CopyConverter));
         r
@@ -259,6 +270,20 @@ pub fn create_unique(dir: &Path, name: impl Fn(u32) -> String) -> Result<(File, 
         }
     }
     Err(std::io::Error::new(ErrorKind::AlreadyExists, "no free output name").into())
+}
+
+/// Creates every output or none: files written before a failure are removed.
+pub(crate) fn write_all_or_nothing(outputs: Vec<(std::fs::File, PathBuf, Vec<u8>)>) -> Result<Vec<PathBuf>> {
+    let paths: Vec<PathBuf> = outputs.iter().map(|(_, p, _)| p.clone()).collect();
+    for (mut file, _, bytes) in outputs {
+        if let Err(e) = file.write_all(&bytes) {
+            for p in &paths {
+                let _ = std::fs::remove_file(p);
+            }
+            return Err(e.into());
+        }
+    }
+    Ok(paths)
 }
 
 #[cfg(test)]
@@ -406,14 +431,31 @@ mod tests {
     #[test]
     fn frontend_operation_snapshot_is_current() {
         let exe = std::env::current_exe().unwrap();
-        let config = EngineConfig { pandoc_path: Some(exe.clone()), typst_path: Some(exe), ..EngineConfig::default() };
+        let config = EngineConfig {
+            pandoc_path: Some(exe.clone()),
+            typst_path: Some(exe.clone()),
+            pdfium_path: Some(exe),
+            ..EngineConfig::default()
+        };
         let r = Registry::with_config(&config);
         let mimes = [
             mime::PDF, mime::DOCX, mime::MARKDOWN, mime::HTML, "image/png", "image/jpeg", "image/webp",
             mime::XLSX, mime::XLS, mime::ODS, mime::CSV, mime::UNKNOWN,
         ];
-        let snapshot: serde_json::Map<String, serde_json::Value> =
+        let operations: serde_json::Map<String, serde_json::Value> =
             mimes.iter().map(|m| (m.to_string(), serde_json::to_value(r.operations(m)).unwrap())).collect();
+        // Batch operations for representative selections (key: the mimes, comma-joined).
+        let selections: [&[&str]; 4] =
+            [&[mime::PDF, mime::PDF], &["image/png"], &["image/png", "image/jpeg"], &[mime::PDF]];
+        let batch: serde_json::Map<String, serde_json::Value> = selections
+            .iter()
+            .map(|sel| {
+                let mimes: Vec<String> = sel.iter().map(|m| m.to_string()).collect();
+                let ops: Vec<Operation> = r.converters.iter().flat_map(|c| c.batch_operations(&mimes)).collect();
+                (mimes.join(","), serde_json::to_value(ops).unwrap())
+            })
+            .collect();
+        let snapshot = serde_json::json!({ "operations": operations, "batch": batch });
         let text = serde_json::to_string_pretty(&snapshot).unwrap() + "\n";
         let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../src/generated/engine-operations.json");
         if std::env::var_os("UPDATE_SNAPSHOT").is_some() {
