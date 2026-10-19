@@ -5,6 +5,14 @@ use std::io::Read;
 use std::path::Path;
 
 pub const UNKNOWN: &str = "application/octet-stream";
+pub const XLSX: &str = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+pub const XLS: &str = "application/vnd.ms-excel";
+pub const ODS: &str = "application/vnd.oasis.opendocument.spreadsheet";
+pub const CSV: &str = "text/csv";
+pub const DOCX: &str = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+pub const MARKDOWN: &str = "text/markdown";
+pub const HTML: &str = "text/html";
+pub const PDF: &str = "application/pdf";
 
 const BY_EXTENSION: &[(&str, &str)] = &[
     ("png", "image/png"),
@@ -12,15 +20,18 @@ const BY_EXTENSION: &[(&str, &str)] = &[
     ("jpeg", "image/jpeg"),
     ("webp", "image/webp"),
     ("gif", "image/gif"),
-    ("pdf", "application/pdf"),
-    ("docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
-    ("xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
-    ("md", "text/markdown"),
-    ("markdown", "text/markdown"),
+    ("pdf", PDF),
+    ("docx", DOCX),
+    ("xlsx", XLSX),
+    ("xls", XLS),
+    ("ods", ODS),
+    ("md", MARKDOWN),
+    ("markdown", MARKDOWN),
     ("txt", "text/plain"),
-    ("csv", "text/csv"),
+    ("csv", CSV),
     ("json", "application/json"),
-    ("html", "text/html"),
+    ("html", HTML),
+    ("htm", HTML),
     ("zip", "application/zip"),
 ];
 
@@ -32,7 +43,7 @@ fn sniff(head: &[u8]) -> Option<&'static str> {
     } else if head.len() >= 12 && &head[..4] == b"RIFF" && &head[8..12] == b"WEBP" {
         Some("image/webp")
     } else if head.starts_with(b"%PDF-") {
-        Some("application/pdf")
+        Some(PDF)
     } else {
         None
     }

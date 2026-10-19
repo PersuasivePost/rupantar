@@ -6,6 +6,7 @@ mod shell;
 mod tray;
 
 use std::path::Path;
+use std::sync::Arc;
 
 use tauri::{Manager, RunEvent};
 use tauri_plugin_autostart::MacosLauncher;
@@ -39,6 +40,7 @@ pub fn run() {
 
             app.handle().plugin(tauri_plugin_global_shortcut::Builder::new().build())?;
             app.manage(shell::Shell::new());
+            app.manage(commands::Engine(Arc::new(engine::Registry::with_config(&shell::engine_config()))));
 
             let handle = app.handle();
             let saved = settings::load(handle);

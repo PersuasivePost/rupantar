@@ -2,6 +2,7 @@
 
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 
 use engine::{Operation, Options, Registry};
 use serde::Serialize;
@@ -10,22 +11,30 @@ use tauri::{AppHandle, State};
 use crate::settings::{self, Settings};
 use crate::shell::{self, Shell, Summon};
 
+/// The converter registry, built once at startup with the tool paths found then.
+pub struct Engine(pub Arc<Registry>);
+
+/// Operations for a selection: `mimes` has one entry per file (see `FileBatch::mimes`).
+/// Unavailable ones (missing pandoc/typst) are included, flagged; the menu hides them.
 #[tauri::command]
-pub fn list_operations(mime: String) -> Vec<Operation> {
-    Registry::with_defaults().operations(&mime)
+pub fn list_operations(engine: State<Engine>, mimes: Vec<String>) -> Vec<Operation> {
+    engine.0.operations_for(&mimes)
 }
 
 /// Async + `spawn_blocking`: conversions can take seconds and sync commands run on the main
-/// thread, which would freeze the tray and window.
+/// thread, which would freeze the tray and window. File types are detected again here rather
+/// than trusted from the frontend.
 #[tauri::command]
 pub async fn run_operation(
-    mime: String,
+    engine: State<'_, Engine>,
     op: Operation,
     inputs: Vec<PathBuf>,
     options: Option<Options>,
 ) -> Result<Vec<PathBuf>, String> {
+    let registry = Arc::clone(&engine.0);
     tauri::async_runtime::spawn_blocking(move || {
-        Registry::with_defaults().run(&mime, &op, &inputs, &options.unwrap_or_default())
+        let mimes: Vec<String> = inputs.iter().map(|f| engine::mime::detect(f)).collect();
+        registry.run_for(&mimes, &op, &inputs, &options.unwrap_or_default())
     })
     .await
     .map_err(|e| e.to_string())?
@@ -37,7 +46,10 @@ pub struct FileBatch {
     pub paths: Vec<String>,
     /// File name for one file, "N files" for several.
     pub label: String,
+    /// The type shared by every file, or `application/octet-stream` for a mixed batch.
     pub mime: String,
+    /// One per file, in `paths` order.
+    pub mimes: Vec<String>,
 }
 
 #[tauri::command]
@@ -55,6 +67,7 @@ pub fn describe_files(paths: Vec<PathBuf>) -> Result<FileBatch, String> {
         paths: files.iter().map(|f| f.to_string_lossy().into_owned()).collect(),
         label,
         mime: engine::mime::common(&mimes),
+        mimes,
     })
 }
 

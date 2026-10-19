@@ -6,6 +6,7 @@ import {
 import { X, type LucideIcon } from "lucide-react";
 import type { Operation } from "../api";
 import { fileIcon, iconFor } from "../icons";
+import { visibleOperations } from "../lib/operations";
 import { TAU, angleFromUp, pickInSpan, pickWedge, polar, sectorPath } from "../lib/radial";
 
 // Geometry (px). Everything is laid out once in a SIZE x SIZE box centered on the cursor;
@@ -33,7 +34,7 @@ export interface RadialMenuProps {
   /** Cursor position; the menu is centered here (clamped to stay on screen). */
   origin: { x: number; y: number };
   file: { name: string; mime: string };
-  /** 4-8 operations for this file type. */
+  /** Up to 8 operations for this selection. Unavailable ones (missing tools) are not rendered. */
   operations: Operation[];
   /** Runs the chosen operation; `parent` is set when it came from the sub ring. */
   onConfirm: (op: Operation, parent?: Operation) => Promise<unknown>;
@@ -45,11 +46,14 @@ export interface RadialMenuProps {
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+/** Width a label may take in a wedge spanning `span` radians at radius `r` (it wraps beyond). */
+const labelWidth = (r: number, span: number, fill: number) => 2 * r * Math.sin(Math.min(span, Math.PI) / 2) * fill;
 const spring = { type: "spring", stiffness: 420, damping: 28, mass: 0.8 } as const;
 
-export function RadialMenu({ origin, file, operations, onConfirm, onDismiss, onDone, scrim = true }: RadialMenuProps) {
+export function RadialMenu({ origin, file, operations: all, onConfirm, onDismiss, onDone, scrim = true }: RadialMenuProps) {
   const reduced = !!useReducedMotion();
   const uid = useId().replace(/:/g, "");
+  const operations = useMemo(() => visibleOperations(all), [all]);
   const n = operations.length;
   const step = TAU / n;
 
@@ -72,6 +76,9 @@ export function RadialMenu({ origin, file, operations, onConfirm, onDismiss, onD
   latest.current = { hi, sub, expanded, phase };
   const timers = useRef<number[]>([]);
   useEffect(() => () => timers.current.forEach(clearTimeout), []);
+  useEffect(() => {
+    if (n === 0) onDismiss(); // nothing left to offer once unavailable operations are hidden
+  }, [n, onDismiss]);
 
   const progress = useMotionValue(0);
   const aimX = useSpring(0, { stiffness: 500, damping: 34 });
@@ -293,6 +300,7 @@ export function RadialMenu({ origin, file, operations, onConfirm, onDismiss, onD
             path={sectorPath(C, R_IN, R_OUT, i * step - step / 2, i * step + step / 2, GAP)}
             angle={i * step}
             rMid={(R_IN + R_OUT) / 2 + 2}
+            maxWidth={Math.min(112, labelWidth((R_IN + R_OUT) / 2, step, 0.78))}
             label={op.label}
             Icon={iconFor(op.icon)}
             highlighted={hi === i && phase === "choosing"}
@@ -325,6 +333,7 @@ export function RadialMenu({ origin, file, operations, onConfirm, onDismiss, onD
                     path={sectorPath(C, S_IN, S_OUT, a0, a0 + span, GAP)}
                     angle={a0 + span / 2}
                     rMid={(S_IN + S_OUT) / 2}
+                    maxWidth={Math.min(96, labelWidth((S_IN + S_OUT) / 2, span, 0.85))}
                     label={child.label}
                     Icon={iconFor(child.icon)}
                     highlighted={sub === j}
@@ -460,6 +469,7 @@ interface SegmentProps {
   path: string;
   angle: number;
   rMid: number;
+  maxWidth: number;
   label: string;
   Icon: LucideIcon;
   highlighted: boolean;
@@ -469,7 +479,7 @@ interface SegmentProps {
 }
 
 /** One wedge. The outer layer owns the bloom/collapse variants; the inner layer owns the highlight scale. */
-function Segment({ uid, variants, custom, path, angle, rMid, label, Icon, highlighted, hasChildren, reduced, small }: SegmentProps) {
+function Segment({ uid, variants, custom, path, angle, rMid, maxWidth, label, Icon, highlighted, hasChildren, reduced, small }: SegmentProps) {
   const p = polar(rMid, angle);
   return (
     <motion.div className="absolute inset-0" style={{ willChange: "transform, opacity" }} variants={variants} custom={custom}>
@@ -495,7 +505,8 @@ function Segment({ uid, variants, custom, path, angle, rMid, label, Icon, highli
           transition={{ type: "spring", stiffness: 520, damping: 30 }}
         >
           <Icon size={small ? 18 : 24} strokeWidth={1.7} />
-          <span className={`mt-1 font-medium leading-none ${small ? "text-[10px]" : "text-[11px]"}`}>{label}</span>
+          <span className={`mt-1 text-center font-medium leading-[1.1] ${small ? "text-[10px]" : "text-[11px]"}`}
+            style={{ maxWidth, textWrap: "balance" }}>{label}</span>
           {hasChildren && <span className="mt-1 h-[3px] w-[3px] rounded-full" style={{ background: "var(--accent)" }} />}
         </motion.div>
       </motion.div>

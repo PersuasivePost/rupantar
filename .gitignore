@@ -6,3 +6,4 @@ src-tauri/gen/
 .local/
 .config/
 .agents/
+src-tauri/binaries/

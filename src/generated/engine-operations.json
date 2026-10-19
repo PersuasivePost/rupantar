@@ -1,0 +1,580 @@
+{
+  "application/octet-stream": [
+    {
+      "available": true,
+      "icon": "Copy",
+      "id": "copy",
+      "label": "Duplicate"
+    }
+  ],
+  "application/pdf": [
+    {
+      "available": true,
+      "icon": "Copy",
+      "id": "copy",
+      "label": "Duplicate"
+    }
+  ],
+  "application/vnd.ms-excel": [
+    {
+      "available": true,
+      "children": [
+        {
+          "available": true,
+          "icon": "Columns3",
+          "id": "sheet.to_csv.comma",
+          "label": "Comma"
+        },
+        {
+          "available": true,
+          "icon": "Columns3",
+          "id": "sheet.to_csv.semicolon",
+          "label": "Semicolon"
+        },
+        {
+          "available": true,
+          "icon": "ArrowRightToLine",
+          "id": "sheet.to_csv.tab",
+          "label": "Tab"
+        }
+      ],
+      "icon": "FileText",
+      "id": "sheet.to_csv",
+      "label": "CSV"
+    },
+    {
+      "available": true,
+      "icon": "Copy",
+      "id": "copy",
+      "label": "Duplicate"
+    }
+  ],
+  "application/vnd.oasis.opendocument.spreadsheet": [
+    {
+      "available": true,
+      "children": [
+        {
+          "available": true,
+          "icon": "Columns3",
+          "id": "sheet.to_csv.comma",
+          "label": "Comma"
+        },
+        {
+          "available": true,
+          "icon": "Columns3",
+          "id": "sheet.to_csv.semicolon",
+          "label": "Semicolon"
+        },
+        {
+          "available": true,
+          "icon": "ArrowRightToLine",
+          "id": "sheet.to_csv.tab",
+          "label": "Tab"
+        }
+      ],
+      "icon": "FileText",
+      "id": "sheet.to_csv",
+      "label": "CSV"
+    },
+    {
+      "available": true,
+      "icon": "Copy",
+      "id": "copy",
+      "label": "Duplicate"
+    }
+  ],
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": [
+    {
+      "available": true,
+      "children": [
+        {
+          "available": true,
+          "icon": "Columns3",
+          "id": "sheet.to_csv.comma",
+          "label": "Comma"
+        },
+        {
+          "available": true,
+          "icon": "Columns3",
+          "id": "sheet.to_csv.semicolon",
+          "label": "Semicolon"
+        },
+        {
+          "available": true,
+          "icon": "ArrowRightToLine",
+          "id": "sheet.to_csv.tab",
+          "label": "Tab"
+        }
+      ],
+      "icon": "FileText",
+      "id": "sheet.to_csv",
+      "label": "CSV"
+    },
+    {
+      "available": true,
+      "icon": "Copy",
+      "id": "copy",
+      "label": "Duplicate"
+    }
+  ],
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document": [
+    {
+      "available": true,
+      "icon": "FileCode",
+      "id": "doc.to_md",
+      "label": "Markdown"
+    },
+    {
+      "available": true,
+      "icon": "FilePen",
+      "id": "doc.to_odt",
+      "label": "ODT"
+    },
+    {
+      "available": true,
+      "icon": "BookOpen",
+      "id": "doc.to_epub",
+      "label": "EPUB"
+    },
+    {
+      "available": true,
+      "icon": "FileText",
+      "id": "doc.to_pdf",
+      "label": "PDF"
+    },
+    {
+      "available": true,
+      "icon": "Copy",
+      "id": "copy",
+      "label": "Duplicate"
+    }
+  ],
+  "image/jpeg": [
+    {
+      "available": true,
+      "children": [
+        {
+          "available": true,
+          "icon": "FileImage",
+          "id": "image.convert.png",
+          "label": "PNG"
+        },
+        {
+          "available": true,
+          "icon": "Image",
+          "id": "image.convert.webp",
+          "label": "WebP"
+        }
+      ],
+      "icon": "FileImage",
+      "id": "image.convert",
+      "label": "Convert"
+    },
+    {
+      "available": true,
+      "children": [
+        {
+          "available": true,
+          "icon": "Percent",
+          "id": "image.resize.pct.50",
+          "label": "50%"
+        },
+        {
+          "available": true,
+          "icon": "Percent",
+          "id": "image.resize.pct.25",
+          "label": "25%"
+        },
+        {
+          "available": true,
+          "icon": "Maximize2",
+          "id": "image.resize.max.1920",
+          "label": "Max 1920"
+        },
+        {
+          "available": true,
+          "icon": "Maximize2",
+          "id": "image.resize.max.1080",
+          "label": "Max 1080"
+        }
+      ],
+      "icon": "Maximize2",
+      "id": "image.resize",
+      "label": "Resize"
+    },
+    {
+      "available": true,
+      "children": [
+        {
+          "available": true,
+          "icon": "Feather",
+          "id": "image.compress.85",
+          "label": "Light"
+        },
+        {
+          "available": true,
+          "icon": "Gauge",
+          "id": "image.compress.70",
+          "label": "Balanced"
+        },
+        {
+          "available": true,
+          "icon": "Minimize2",
+          "id": "image.compress.40",
+          "label": "Smallest"
+        }
+      ],
+      "icon": "Minimize2",
+      "id": "image.compress",
+      "label": "Compress"
+    },
+    {
+      "available": true,
+      "children": [
+        {
+          "available": true,
+          "icon": "RotateCw",
+          "id": "image.rotate.90",
+          "label": "90° CW"
+        },
+        {
+          "available": true,
+          "icon": "RotateCcw",
+          "id": "image.rotate.270",
+          "label": "90° CCW"
+        },
+        {
+          "available": true,
+          "icon": "RotateCw",
+          "id": "image.rotate.180",
+          "label": "180°"
+        }
+      ],
+      "icon": "RotateCw",
+      "id": "image.rotate",
+      "label": "Rotate"
+    },
+    {
+      "available": true,
+      "icon": "Copy",
+      "id": "copy",
+      "label": "Duplicate"
+    }
+  ],
+  "image/png": [
+    {
+      "available": true,
+      "children": [
+        {
+          "available": true,
+          "icon": "FileImage",
+          "id": "image.convert.jpg",
+          "label": "JPG"
+        },
+        {
+          "available": true,
+          "icon": "Image",
+          "id": "image.convert.webp",
+          "label": "WebP"
+        }
+      ],
+      "icon": "FileImage",
+      "id": "image.convert",
+      "label": "Convert"
+    },
+    {
+      "available": true,
+      "children": [
+        {
+          "available": true,
+          "icon": "Percent",
+          "id": "image.resize.pct.50",
+          "label": "50%"
+        },
+        {
+          "available": true,
+          "icon": "Percent",
+          "id": "image.resize.pct.25",
+          "label": "25%"
+        },
+        {
+          "available": true,
+          "icon": "Maximize2",
+          "id": "image.resize.max.1920",
+          "label": "Max 1920"
+        },
+        {
+          "available": true,
+          "icon": "Maximize2",
+          "id": "image.resize.max.1080",
+          "label": "Max 1080"
+        }
+      ],
+      "icon": "Maximize2",
+      "id": "image.resize",
+      "label": "Resize"
+    },
+    {
+      "available": true,
+      "children": [
+        {
+          "available": true,
+          "icon": "Feather",
+          "id": "image.compress.85",
+          "label": "Light"
+        },
+        {
+          "available": true,
+          "icon": "Gauge",
+          "id": "image.compress.70",
+          "label": "Balanced"
+        },
+        {
+          "available": true,
+          "icon": "Minimize2",
+          "id": "image.compress.40",
+          "label": "Smallest"
+        }
+      ],
+      "icon": "Minimize2",
+      "id": "image.compress",
+      "label": "Compress"
+    },
+    {
+      "available": true,
+      "children": [
+        {
+          "available": true,
+          "icon": "RotateCw",
+          "id": "image.rotate.90",
+          "label": "90° CW"
+        },
+        {
+          "available": true,
+          "icon": "RotateCcw",
+          "id": "image.rotate.270",
+          "label": "90° CCW"
+        },
+        {
+          "available": true,
+          "icon": "RotateCw",
+          "id": "image.rotate.180",
+          "label": "180°"
+        }
+      ],
+      "icon": "RotateCw",
+      "id": "image.rotate",
+      "label": "Rotate"
+    },
+    {
+      "available": true,
+      "icon": "Copy",
+      "id": "copy",
+      "label": "Duplicate"
+    }
+  ],
+  "image/webp": [
+    {
+      "available": true,
+      "children": [
+        {
+          "available": true,
+          "icon": "FileImage",
+          "id": "image.convert.png",
+          "label": "PNG"
+        },
+        {
+          "available": true,
+          "icon": "FileImage",
+          "id": "image.convert.jpg",
+          "label": "JPG"
+        }
+      ],
+      "icon": "FileImage",
+      "id": "image.convert",
+      "label": "Convert"
+    },
+    {
+      "available": true,
+      "children": [
+        {
+          "available": true,
+          "icon": "Percent",
+          "id": "image.resize.pct.50",
+          "label": "50%"
+        },
+        {
+          "available": true,
+          "icon": "Percent",
+          "id": "image.resize.pct.25",
+          "label": "25%"
+        },
+        {
+          "available": true,
+          "icon": "Maximize2",
+          "id": "image.resize.max.1920",
+          "label": "Max 1920"
+        },
+        {
+          "available": true,
+          "icon": "Maximize2",
+          "id": "image.resize.max.1080",
+          "label": "Max 1080"
+        }
+      ],
+      "icon": "Maximize2",
+      "id": "image.resize",
+      "label": "Resize"
+    },
+    {
+      "available": true,
+      "children": [
+        {
+          "available": true,
+          "icon": "Feather",
+          "id": "image.compress.85",
+          "label": "Light"
+        },
+        {
+          "available": true,
+          "icon": "Gauge",
+          "id": "image.compress.70",
+          "label": "Balanced"
+        },
+        {
+          "available": true,
+          "icon": "Minimize2",
+          "id": "image.compress.40",
+          "label": "Smallest"
+        }
+      ],
+      "icon": "Minimize2",
+      "id": "image.compress",
+      "label": "Compress"
+    },
+    {
+      "available": true,
+      "children": [
+        {
+          "available": true,
+          "icon": "RotateCw",
+          "id": "image.rotate.90",
+          "label": "90° CW"
+        },
+        {
+          "available": true,
+          "icon": "RotateCcw",
+          "id": "image.rotate.270",
+          "label": "90° CCW"
+        },
+        {
+          "available": true,
+          "icon": "RotateCw",
+          "id": "image.rotate.180",
+          "label": "180°"
+        }
+      ],
+      "icon": "RotateCw",
+      "id": "image.rotate",
+      "label": "Rotate"
+    },
+    {
+      "available": true,
+      "icon": "Copy",
+      "id": "copy",
+      "label": "Duplicate"
+    }
+  ],
+  "text/csv": [
+    {
+      "available": true,
+      "children": [
+        {
+          "available": true,
+          "icon": "Columns3",
+          "id": "sheet.to_xlsx.comma",
+          "label": "Comma"
+        },
+        {
+          "available": true,
+          "icon": "Columns3",
+          "id": "sheet.to_xlsx.semicolon",
+          "label": "Semicolon"
+        },
+        {
+          "available": true,
+          "icon": "ArrowRightToLine",
+          "id": "sheet.to_xlsx.tab",
+          "label": "Tab"
+        }
+      ],
+      "icon": "FileSpreadsheet",
+      "id": "sheet.to_xlsx",
+      "label": "XLSX"
+    },
+    {
+      "available": true,
+      "icon": "Copy",
+      "id": "copy",
+      "label": "Duplicate"
+    }
+  ],
+  "text/html": [
+    {
+      "available": true,
+      "icon": "FileCode",
+      "id": "doc.to_md",
+      "label": "Markdown"
+    },
+    {
+      "available": true,
+      "icon": "FileType",
+      "id": "doc.to_docx",
+      "label": "Word"
+    },
+    {
+      "available": true,
+      "icon": "FileText",
+      "id": "doc.to_pdf",
+      "label": "PDF"
+    },
+    {
+      "available": true,
+      "icon": "Copy",
+      "id": "copy",
+      "label": "Duplicate"
+    }
+  ],
+  "text/markdown": [
+    {
+      "available": true,
+      "icon": "FileType",
+      "id": "doc.to_docx",
+      "label": "Word"
+    },
+    {
+      "available": true,
+      "icon": "Globe",
+      "id": "doc.to_html",
+      "label": "HTML"
+    },
+    {
+      "available": true,
+      "icon": "BookOpen",
+      "id": "doc.to_epub",
+      "label": "EPUB"
+    },
+    {
+      "available": true,
+      "icon": "FileText",
+      "id": "doc.to_pdf",
+      "label": "PDF"
+    },
+    {
+      "available": true,
+      "icon": "Copy",
+      "id": "copy",
+      "label": "Duplicate"
+    }
+  ]
+}

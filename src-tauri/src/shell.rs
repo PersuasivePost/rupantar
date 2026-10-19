@@ -188,6 +188,21 @@ pub fn apply_autostart(app: &AppHandle, enabled: bool) -> Result<(), String> {
     }
 }
 
+/// Tool paths for the engine. Tauri installs `bundle.externalBin` sidecars next to the main
+/// executable (`Contents/MacOS` on macOS) without the target-triple suffix, and `tauri dev`
+/// copies them there too; PATH is the fallback (the engine does that part).
+pub fn engine_config() -> engine::EngineConfig {
+    let exe_dir = std::env::current_exe().ok().and_then(|p| p.parent().map(Path::to_path_buf));
+    let config = engine::EngineConfig::locate(exe_dir.as_slice());
+    for (tool, path) in [("pandoc", &config.pandoc_path), ("typst", &config.typst_path)] {
+        match path {
+            Some(p) => eprintln!("rupantar: using {tool} at {}", p.display()),
+            None => eprintln!("rupantar: {tool} not found; operations that need it are hidden"),
+        }
+    }
+    config
+}
+
 pub fn on_window_event(window: &Window, event: &WindowEvent) {
     match event {
         // Windows are created once and reused, so closing only hides them.

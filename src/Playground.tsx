@@ -1,17 +1,24 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { AnimatePresence } from "framer-motion";
 import { Monitor, Moon, MousePointerClick, Sun, type LucideIcon } from "lucide-react";
-import { listOperations, runOperation, type Operation } from "./api";
+import { listOperations, runOperation, setMockTools, type MockTools, type Operation } from "./api";
 import { fileIcon } from "./icons";
-import { SAMPLE_FILES, mimeFromFile, type SampleFile } from "./mockFiles";
+import { LAYOUT_TEST_MIME, SAMPLE_FILES, commonMime, mimeFromFile } from "./mockFiles";
 import { RadialMenu } from "./components/RadialMenu";
 
 type Theme = "system" | "light" | "dark";
 
+interface MockFile {
+  name: string;
+  mime: string;
+}
+
 interface OpenMenu {
   id: number;
   origin: { x: number; y: number };
-  file: { name: string; mime: string };
+  /** What the center disc shows: the file name, or "N files". */
+  file: MockFile;
+  names: string[];
   operations: Operation[];
 }
 
@@ -21,36 +28,81 @@ function applyTheme(theme: Theme) {
   else root.setAttribute("data-theme", theme);
 }
 
-/** Dev playground: pick a mock file type, click (or drop a file) anywhere to summon the menu there. */
+/** `Report.pdf` -> `Report 2.pdf`, for the extra copies in a batch. */
+const numbered = (name: string, i: number) => (i === 0 ? name : name.replace(/(\.[^.]+)?$/, ` ${i + 1}$1`));
+
+const TOOLS: { key: keyof MockTools; label: string }[] = [
+  { key: "pandoc", label: "pandoc" },
+  { key: "typst", label: "typst" },
+  { key: "pdfium", label: "pdfium" },
+];
+
+/**
+ * Dev playground: pick one or more mock file types (and how many of each), click (or drop
+ * files) anywhere to summon the menu there. Tool switches hide what a missing tool would.
+ */
 export default function Playground() {
-  const [selected, setSelected] = useState<SampleFile>(SAMPLE_FILES[0]);
+  const [types, setTypes] = useState<string[]>([SAMPLE_FILES[0].label]);
+  const [copies, setCopies] = useState("1");
+  const [tools, setTools] = useState<MockTools>({ pandoc: true, typst: true, pdfium: true });
   const [menu, setMenu] = useState<OpenMenu | null>(null);
   const [log, setLog] = useState<string[]>([]);
   const [theme, setTheme] = useState<Theme>("system");
   const nextId = useRef(1);
 
-  const summon = useCallback(async (x: number, y: number, file: { name: string; mime: string }) => {
-    const operations = await listOperations(file.mime);
-    setMenu({ id: nextId.current++, origin: { x, y }, file, operations });
+  const selection = useMemo<MockFile[]>(
+    () =>
+      SAMPLE_FILES.filter((f) => types.includes(f.label)).flatMap((f) =>
+        Array.from({ length: Number(copies) }, (_, i) => ({ name: numbered(f.name, i), mime: f.mime })),
+      ),
+    [types, copies],
+  );
+
+  // The layout test isn't a real type, so it can't be combined with the others.
+  const toggleType = (label: string) => {
+    const isTest = (l: string) => SAMPLE_FILES.find((f) => f.label === l)?.mime === LAYOUT_TEST_MIME;
+    setTypes((cur) => {
+      if (cur.includes(label)) return cur.length > 1 ? cur.filter((l) => l !== label) : cur;
+      return isTest(label) ? [label] : [...cur.filter((l) => !isTest(l)), label];
+    });
+  };
+
+  const toggleTool = (key: keyof MockTools) => {
+    const next = { ...tools, [key]: !tools[key] };
+    setTools(next);
+    setMockTools(next);
+  };
+
+  const summon = useCallback(async (x: number, y: number, files: MockFile[]) => {
+    const operations = await listOperations(files.map((f) => f.mime));
+    const label = files.length === 1 ? files[0].name : `${files.length} files`;
+    setMenu({
+      id: nextId.current++,
+      origin: { x, y },
+      file: { name: label, mime: commonMime(files.map((f) => f.mime)) },
+      names: files.map((f) => f.name),
+      operations,
+    });
   }, []);
 
   const onStageClick = (e: React.MouseEvent) => {
     if ((e.target as HTMLElement).closest("[data-no-menu]")) return;
-    void summon(e.clientX, e.clientY, selected);
+    void summon(e.clientX, e.clientY, selection);
   };
 
   const onDrop = (e: React.DragEvent) => {
     e.preventDefault();
-    const f = e.dataTransfer.files[0];
-    void summon(e.clientX, e.clientY, f ? { name: f.name, mime: mimeFromFile(f) } : selected);
+    const dropped = Array.from(e.dataTransfer.files, (f) => ({ name: f.name, mime: mimeFromFile(f) }));
+    void summon(e.clientX, e.clientY, dropped.length ? dropped : selection);
   };
 
   const onConfirm = useCallback(
     async (op: Operation, parent?: Operation) => {
       if (!menu) return;
-      const out = await runOperation(menu.file.mime, op, [menu.file.name], parent ? { parent: parent.id } : {});
+      const out = await runOperation(op, menu.names, parent ? { parent: parent.id } : {});
       const via = parent ? `${parent.label} › ${op.label}` : op.label;
-      setLog((l) => [`${menu.file.name} → ${via} → ${out[0]}`, ...l].slice(0, 5));
+      const result = out.length === 1 ? out[0] : `${out.length} files`;
+      setLog((l) => [`${menu.file.name} → ${via} → ${result}`, ...l].slice(0, 5));
     },
     [menu],
   );
@@ -65,17 +117,27 @@ export default function Playground() {
       onDragOver={(e) => e.preventDefault()}
       onDrop={onDrop}
     >
-      <header data-no-menu className="absolute left-0 right-0 top-0 flex flex-wrap items-center justify-between gap-3 p-4 cursor-default">
+      <header data-no-menu className="absolute left-0 right-0 top-0 flex flex-wrap items-start justify-between gap-3 p-4 cursor-default">
         <div>
           <h1 className="text-sm font-semibold tracking-wide">Rupantar · Radial playground</h1>
           <p className="text-xs" style={{ color: "var(--text-dim)" }}>Mock data · respects OS reduced-motion</p>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <Toggles
+            label="File types"
+            options={SAMPLE_FILES.map((f) => ({ value: f.label, label: f.label, Icon: fileIcon(f.mime), on: types.includes(f.label) }))}
+            onToggle={toggleType}
+          />
           <Segmented
-            label="File type"
-            value={selected.label}
-            options={SAMPLE_FILES.map((f) => ({ value: f.label, label: f.label, Icon: fileIcon(f.mime) }))}
-            onChange={(v) => setSelected(SAMPLE_FILES.find((f) => f.label === v)!)}
+            label="Files of each type"
+            value={copies}
+            options={["1", "2", "3"].map((v) => ({ value: v, label: `×${v}` }))}
+            onChange={setCopies}
+          />
+          <Toggles
+            label="Installed tools"
+            options={TOOLS.map((t) => ({ value: t.key, label: t.label, on: tools[t.key] }))}
+            onToggle={(k) => toggleTool(k as keyof MockTools)}
           />
           <Segmented
             label="Theme"
@@ -90,14 +152,17 @@ export default function Playground() {
         </div>
       </header>
 
-      <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-2 text-center transition-opacity duration-200"
+      <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-2 px-4 text-center transition-opacity duration-200"
         style={{ opacity: menu ? 0 : 1 }}>
         <MousePointerClick size={28} style={{ color: "var(--text-dim)" }} />
-        <p className="text-sm">Click anywhere, or drop a file</p>
+        <p className="text-sm">Click anywhere, or drop files</p>
         <p className="text-xs" style={{ color: "var(--text-dim)" }}>
           Flick toward a wedge, click to confirm · Esc or move away to cancel · arrows + Enter work too
         </p>
-        <p className="text-xs" style={{ color: "var(--text-dim)" }}>Wedges with a dot have sub-options (Compress, Resize)</p>
+        <p className="text-xs" style={{ color: "var(--text-dim)" }}>
+          Selected: {selection.length === 1 ? selection[0].name : `${selection.length} files`} · mixed types show only what all of them support
+        </p>
+        <p className="text-xs" style={{ color: "var(--text-dim)" }}>Wedges with a dot have sub-options (DPI, page range, delimiter, …)</p>
       </div>
 
       {log.length > 0 && (
@@ -124,20 +189,41 @@ export default function Playground() {
   );
 }
 
+const groupStyle = { background: "var(--panel)", borderColor: "var(--panel-border)", backdropFilter: "blur(12px)" };
+const buttonClass = "flex items-center gap-1.5 rounded-[10px] px-2.5 py-1.5 text-xs font-medium transition-colors";
+const onStyle = { background: "var(--accent)", color: "#fff" };
+const offStyle = { color: "var(--text-dim)" };
+
 function Segmented<T extends string>({ label, value, options, onChange }: {
   label: string;
   value: T;
-  options: { value: T; label: string; Icon: LucideIcon }[];
+  options: { value: T; label: string; Icon?: LucideIcon }[];
   onChange: (v: T) => void;
 }) {
   return (
-    <div role="radiogroup" aria-label={label} className="flex rounded-xl border p-0.5"
-      style={{ background: "var(--panel)", borderColor: "var(--panel-border)", backdropFilter: "blur(12px)" }}>
+    <div role="radiogroup" aria-label={label} className="flex rounded-xl border p-0.5" style={groupStyle}>
       {options.map(({ value: v, label: l, Icon }) => (
         <button key={v} role="radio" aria-checked={v === value} onClick={() => onChange(v)}
-          className="flex items-center gap-1.5 rounded-[10px] px-2.5 py-1.5 text-xs font-medium transition-colors"
-          style={v === value ? { background: "var(--accent)", color: "#fff" } : { color: "var(--text-dim)" }}>
-          <Icon size={14} />{l}
+          className={buttonClass} style={v === value ? onStyle : offStyle}>
+          {Icon && <Icon size={14} />}{l}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/** Like `Segmented`, but each option toggles independently. */
+function Toggles({ label, options, onToggle }: {
+  label: string;
+  options: { value: string; label: string; Icon?: LucideIcon; on: boolean }[];
+  onToggle: (v: string) => void;
+}) {
+  return (
+    <div role="group" aria-label={label} className="flex flex-wrap rounded-xl border p-0.5" style={groupStyle}>
+      {options.map(({ value, label: l, Icon, on }) => (
+        <button key={value} aria-pressed={on} onClick={() => onToggle(value)}
+          className={buttonClass} style={on ? onStyle : offStyle}>
+          {Icon && <Icon size={14} />}{l}
         </button>
       ))}
     </div>

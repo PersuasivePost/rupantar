@@ -3,6 +3,8 @@ run = "npm run dev"
 
 [nix]
 channel = "stable-25_05"
+# For the engine's document tests (they skip when pandoc isn't on PATH).
+packages = ["pandoc", "typst"]
 
 [agent]
 expertMode = true
@@ -10,3 +12,4 @@ expertMode = true
 [[ports]]
 localPort = 5000
 externalPort = 80
+exposeLocalhost = true

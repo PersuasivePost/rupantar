@@ -30,7 +30,7 @@ export default function RadialHost() {
     cancelHide();
     try {
       const batch = await describeFiles(paths);
-      const operations = await listOperations(batch.mime);
+      const operations = await listOperations(batch.mimes);
       setState({ kind: "menu", id: nextId.current++, origin: at, batch, operations });
     } catch (e) {
       console.error(e);
@@ -98,7 +98,7 @@ export default function RadialHost() {
           file={{ name: state.batch.label, mime: state.batch.mime }}
           operations={state.operations}
           onConfirm={(op, parent) =>
-            runOperation(state.batch.mime, op, state.batch.paths, parent ? { parent: parent.id } : {})
+            runOperation(op, state.batch.paths, parent ? { parent: parent.id } : {})
           }
           onDismiss={close}
           onDone={close}
