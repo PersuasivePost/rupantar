@@ -1170,6 +1170,7 @@ version = "0.1.0"
 dependencies = [
  "calamine",
  "cfb 0.15.0",
+ "crc32fast",
  "csv",
  "image",
  "lopdf",
@@ -3365,6 +3366,7 @@ dependencies = [
 name = "rupantar"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "engine",
  "placement",
  "serde",

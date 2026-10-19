@@ -29,7 +29,7 @@ use pdfium_render::prelude::{PdfColor, PdfRenderConfig, Pdfium};
 
 use crate::mime::{self, PDF};
 use crate::{
-    catalog, create_unique, sibling_name, write_all_or_nothing, Converter, EngineConfig, EngineError, Operation, Options, Result,
+    catalog, write_siblings, Converter, EngineConfig, EngineError, Operation, Options, Result,
 };
 
 const IMAGE_MIMES: [&str; 3] = ["image/png", "image/jpeg", "image/webp"];
@@ -57,7 +57,43 @@ enum Action {
     Render { format: ImageFormat, dpi: u16 },
     Merge,
     FromImages { a4: bool },
+    Compress(Preset),
+    PageNumbers(Corner),
+    Watermark(String),
+    Text { markdown: bool },
 }
+
+/// Image recompression for `pdf.compress`: images larger than `max_side` px are downsampled,
+/// JPEGs re-encoded at `quality`; with `flate_to_jpeg`, lossless colour/grey images become JPEG.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Preset {
+    max_side: u32,
+    quality: u8,
+    flate_to_jpeg: bool,
+}
+
+const PRESETS: [(&str, &str, &str, Preset); 3] = [
+    ("light", "Light", "Feather", Preset { max_side: 2400, quality: 85, flate_to_jpeg: false }),
+    ("balanced", "Balanced", "Gauge", Preset { max_side: 1600, quality: 70, flate_to_jpeg: true }),
+    ("strong", "Strong", "Minimize2", Preset { max_side: 1100, quality: 50, flate_to_jpeg: true }),
+];
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Corner {
+    BottomCenter,
+    BottomRight,
+    TopRight,
+}
+
+const CORNERS: [(&str, &str, &str, Corner); 3] = [
+    ("bottom_center", "Bottom center", "ArrowDown", Corner::BottomCenter),
+    ("bottom_right", "Bottom right", "ArrowDownRight", Corner::BottomRight),
+    ("top_right", "Top right", "ArrowUpRight", Corner::TopRight),
+];
+
+/// `(id suffix, label, text)` of the watermark presets; option `text` sets any other.
+const WATERMARKS: [(&str, &str, &str); 3] =
+    [("confidential", "Confidential", "CONFIDENTIAL"), ("draft", "Draft", "DRAFT"), ("copy", "Copy", "COPY")];
 
 /// A value from `options[key]`, else the id's remaining segments (joined by '.'), else an error.
 fn value<'a>(options: &'a Options, key: &str, rest: &'a [&'a str]) -> Result<std::borrow::Cow<'a, str>> {
@@ -96,6 +132,34 @@ fn parse_action(id: &str, options: &Options) -> Result<Action> {
             "a4" => Ok(Action::FromImages { a4: true }),
             "original" => Ok(Action::FromImages { a4: false }),
             other => Err(invalid("fit", other)),
+        },
+        ["pdf", "compress", rest @ ..] => {
+            let v = value(options, "level", rest)?;
+            PRESETS.iter().find(|p| p.0 == v).map(|p| Action::Compress(p.3)).ok_or_else(|| invalid("level", &v))
+        }
+        ["pdf", "page_numbers", rest @ ..] => {
+            let v = value(options, "position", rest)?;
+            CORNERS.iter().find(|c| c.0 == v).map(|c| Action::PageNumbers(c.3)).ok_or_else(|| invalid("position", &v))
+        }
+        ["pdf", "watermark", rest @ ..] => {
+            let text = match options.get("text") {
+                Some(t) => t.trim().to_string(),
+                None => {
+                    let v = value(options, "text", rest)?;
+                    WATERMARKS.iter().find(|w| w.0 == v).map(|w| w.2.to_string()).ok_or_else(|| invalid("text", &v))?
+                }
+            };
+            if text.is_empty() || text.chars().count() > 60 || win_ansi(&text).is_none() {
+                return Err(EngineError::InvalidOption(
+                    "watermark text must be 1-60 Latin characters (the built-in PDF fonts have no others)".into(),
+                ));
+            }
+            Ok(Action::Watermark(text))
+        }
+        ["pdf", "to_text", rest @ ..] => match value(options, "format", rest)?.as_ref() {
+            "txt" => Ok(Action::Text { markdown: false }),
+            "md" => Ok(Action::Text { markdown: true }),
+            other => Err(invalid("format", other)),
         },
         _ => Err(EngineError::UnknownOperation(id.to_string())),
     }
@@ -259,28 +323,6 @@ fn save(doc: &mut Document) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 
-fn stem(input: &Path) -> &str {
-    input.file_stem().and_then(|s| s.to_str()).unwrap_or("document")
-}
-
-/// Reserves `name (tag).ext` next to `input` for each `(tag, bytes)` and writes them all, or none.
-fn write_siblings(input: &Path, ext: &str, outputs: Vec<(String, Vec<u8>)>) -> Result<Vec<PathBuf>> {
-    let dir = input.parent().unwrap_or_else(|| Path::new(""));
-    let stem = stem(input);
-    let mut files = Vec::new();
-    for (tag, bytes) in outputs {
-        match create_unique(dir, |n| sibling_name(stem, &tag, n, Some(ext))) {
-            Ok((file, path)) => files.push((file, path, bytes)),
-            Err(e) => {
-                for (_, p, _) in &files {
-                    let _ = std::fs::remove_file(p);
-                }
-                return Err(e);
-            }
-        }
-    }
-    write_all_or_nothing(files)
-}
 
 fn split(input: &Path) -> Result<Vec<PathBuf>> {
     let doc = load(input)?;
@@ -435,6 +477,392 @@ fn from_images(inputs: &[PathBuf], a4: bool) -> Result<PathBuf> {
     Ok(write_siblings(first, "pdf", vec![(tag.into(), save(&mut doc)?)])?.remove(0))
 }
 
+// ---- compress --------------------------------------------------------------------------
+
+/// Upper bound for decoding one stream while compressing (guards against decompression bombs).
+const MAX_STREAM_BYTES: usize = 256 << 20;
+/// Images above this many pixels are left alone rather than decoded.
+const MAX_IMAGE_PIXELS: u64 = 60_000_000;
+
+/// Filter names of a stream, in order (`[]` for none); `None` if `/Filter` is malformed.
+fn filters(stream: &Stream) -> Option<Vec<Vec<u8>>> {
+    match stream.dict.get(b"Filter") {
+        Err(_) => Some(Vec::new()),
+        Ok(Object::Name(n)) => Some(vec![n.clone()]),
+        Ok(Object::Array(a)) => a.iter().map(|o| o.as_name().ok().map(<[u8]>::to_vec)).collect(),
+        Ok(_) => None,
+    }
+}
+
+/// Colour components of an image colour space we can re-encode (grey or RGB-like), else `None`.
+fn components(doc: &Document, cs: &Object) -> Option<u8> {
+    match cs {
+        Object::Name(n) if n == b"DeviceGray" => Some(1),
+        Object::Name(n) if n == b"DeviceRGB" => Some(3),
+        Object::Reference(id) => match doc.get_object(*id).ok()? {
+            Object::Reference(_) => None, // no chains
+            other => components(doc, other),
+        },
+        Object::Array(a) => match a.first()?.as_name().ok()? {
+            b"CalGray" => Some(1),
+            b"CalRGB" => Some(3),
+            b"ICCBased" => {
+                let n = doc.get_object(a.get(1)?.as_reference().ok()?).ok()?.as_stream().ok()?.dict.get(b"N").ok()?.as_i64().ok()?;
+                matches!(n, 1 | 3).then_some(n as u8)
+            }
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// A smaller replacement for an image XObject, if the preset can make one: downsampled past
+/// `max_side`, JPEGs re-encoded, lossless images turned into JPEG when the preset allows.
+/// Anything unusual (masks, 16-bit, Decode arrays, CMYK, palettes) is left alone.
+fn smaller_image(doc: &Document, stream: &Stream, preset: Preset) -> Option<Stream> {
+    let d = &stream.dict;
+    if d.get(b"ImageMask").and_then(Object::as_bool).unwrap_or(false) || d.has(b"Decode") {
+        return None;
+    }
+    let (w, h) = (u32::try_from(d.get(b"Width").ok()?.as_i64().ok()?).ok()?, u32::try_from(d.get(b"Height").ok()?.as_i64().ok()?).ok()?);
+    if w == 0 || h == 0 || u64::from(w) * u64::from(h) > MAX_IMAGE_PIXELS || d.get(b"BitsPerComponent").ok()?.as_i64().ok()? != 8 {
+        return None;
+    }
+    let comps = components(doc, d.get(b"ColorSpace").ok()?)?;
+    let filters = filters(stream)?;
+    let is_jpeg = filters == [b"DCTDecode".to_vec()];
+    let img: DynamicImage = if is_jpeg {
+        if d.has(b"DecodeParms") || jpeg_components(&stream.content) != Some(comps) {
+            return None;
+        }
+        image::load_from_memory_with_format(&stream.content, ImageFormat::Jpeg).ok()?
+    } else if filters.is_empty() || filters == [b"FlateDecode".to_vec()] {
+        let expected = w as usize * h as usize * usize::from(comps);
+        let mut raw = stream.decompressed_content_with_limit(expected + 1024).ok()?;
+        raw.truncate(expected);
+        if comps == 1 {
+            DynamicImage::ImageLuma8(image::GrayImage::from_raw(w, h, raw)?)
+        } else {
+            DynamicImage::ImageRgb8(image::RgbImage::from_raw(w, h, raw)?)
+        }
+    } else {
+        return None;
+    };
+
+    let resize = w.max(h) > preset.max_side;
+    let img = if resize { img.resize(preset.max_side, preset.max_side, image::imageops::FilterType::Lanczos3) } else { img };
+    let to_jpeg = is_jpeg || preset.flate_to_jpeg;
+    if !resize && !to_jpeg {
+        return None; // a lossless image at its size: only the stream recompression applies
+    }
+    let mut out = stream.clone();
+    out.dict.set("Width", i64::from(img.width()));
+    out.dict.set("Height", i64::from(img.height()));
+    if to_jpeg {
+        let mut bytes = Vec::new();
+        let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut bytes, preset.quality);
+        if comps == 1 {
+            let g = img.to_luma8();
+            encoder.encode(g.as_raw(), g.width(), g.height(), image::ExtendedColorType::L8).ok()?;
+        } else {
+            let c = img.to_rgb8();
+            encoder.encode(c.as_raw(), c.width(), c.height(), image::ExtendedColorType::Rgb8).ok()?;
+        }
+        out.set_plain_content(bytes);
+        out.dict.set("Filter", "DCTDecode");
+    } else {
+        let raw = if comps == 1 { img.to_luma8().into_raw() } else { img.to_rgb8().into_raw() };
+        out.set_plain_content(raw);
+        out.compress().ok()?;
+    }
+    (out.content.len() < stream.content.len()).then_some(out)
+}
+
+/// A Flate stream recompressed at the best level, if that is smaller. Streams with other
+/// filters or predictors are left as they are.
+fn smaller_flate(stream: &Stream) -> Option<Stream> {
+    if filters(stream)? != [b"FlateDecode".to_vec()] || stream.dict.has(b"DecodeParms") || !stream.allows_compression {
+        return None;
+    }
+    let mut out = stream.clone();
+    out.set_plain_content(stream.decompressed_content_with_limit(MAX_STREAM_BYTES).ok()?);
+    out.compress().ok()?;
+    (out.content.len() < stream.content.len()).then_some(out)
+}
+
+/// Recompresses streams and images, drops unreachable objects and writes with object streams.
+/// The result is never larger than the input: if nothing could be saved, the copy is identical.
+fn compress(input: &Path, preset: Preset) -> Result<PathBuf> {
+    let mut doc = load(input)?;
+    let original = std::fs::read(input)?;
+    // Soft masks and stencil masks stay lossless.
+    let masks: BTreeSet<ObjectId> = doc
+        .objects
+        .values()
+        .filter_map(|o| o.as_stream().ok())
+        .flat_map(|s| [b"SMask".as_slice(), b"Mask"].map(|k| s.dict.get(k).and_then(Object::as_reference).ok()))
+        .flatten()
+        .collect();
+    let mut replacements = Vec::new();
+    for (id, obj) in &doc.objects {
+        let Object::Stream(stream) = obj else { continue };
+        let is_image = stream.dict.get(b"Subtype").and_then(Object::as_name).is_ok_and(|n| n == b"Image");
+        let smaller = if is_image && !masks.contains(id) { smaller_image(&doc, stream, preset) } else { None };
+        if let Some(s) = smaller.or_else(|| smaller_flate(stream)) {
+            replacements.push((*id, s));
+        }
+    }
+    for (id, s) in replacements {
+        doc.objects.insert(id, Object::Stream(s));
+    }
+    doc.compress(); // streams stored without any filter
+    doc.prune_objects();
+    if doc.version.as_str() < "1.5" {
+        doc.version = "1.5".into(); // object streams
+    }
+    let mut bytes = Vec::new();
+    doc.save_with_options(&mut bytes, lopdf::SaveOptions::builder().use_object_streams(true).use_xref_streams(true).build())?;
+    let bytes = if bytes.len() < original.len() { bytes } else { original };
+    Ok(write_siblings(input, "pdf", vec![("compressed".into(), bytes)])?.remove(0))
+}
+
+// ---- stamping: page numbers, watermark --------------------------------------------------
+
+/// Helvetica-Bold advance widths (1/1000 em) for ASCII 32..=126; Latin-1 letters use 611.
+const HELVETICA_BOLD: [u16; 95] = [
+    278, 333, 474, 556, 556, 889, 722, 238, 333, 333, 389, 584, 278, 333, 278, 278, 556, 556, 556, 556, 556, 556, 556,
+    556, 556, 556, 333, 333, 584, 584, 584, 611, 975, 722, 722, 722, 722, 667, 611, 778, 722, 278, 556, 722, 611, 833,
+    722, 778, 667, 778, 722, 667, 611, 722, 667, 944, 667, 667, 611, 333, 278, 333, 584, 556, 333, 556, 611, 556, 611,
+    556, 333, 611, 611, 278, 278, 556, 278, 889, 611, 611, 611, 611, 389, 556, 333, 611, 556, 778, 556, 556, 500, 389,
+    280, 389, 584,
+];
+
+/// WinAnsi bytes for text in the printable Latin-1 range (what the standard fonts can show).
+fn win_ansi(text: &str) -> Option<Vec<u8>> {
+    text.chars()
+        .map(|c| {
+            let u = u32::from(c);
+            ((0x20..=0x7E).contains(&u) || (0xA0..=0xFF).contains(&u)).then_some(u as u8)
+        })
+        .collect()
+}
+
+/// Width of WinAnsi `bytes` in Helvetica-Bold at size 1. Digits are 0.556 in every Helvetica.
+fn text_width(bytes: &[u8]) -> f32 {
+    bytes.iter().map(|&b| f32::from(HELVETICA_BOLD.get(usize::from(b).wrapping_sub(32)).copied().unwrap_or(611)) / 1000.0).sum()
+}
+
+/// A PDF literal string `(…)` for raw bytes.
+fn literal(bytes: &[u8]) -> Vec<u8> {
+    let mut out = vec![b'('];
+    for &b in bytes {
+        if matches!(b, b'(' | b')' | b'\\') {
+            out.push(b'\\');
+        }
+        out.push(b);
+    }
+    out.push(b')');
+    out
+}
+
+/// Adds `value` to the page's `category` resources (e.g. `Font`) and returns its name. Reuses
+/// the name if the same value is already there (pages often share one resource dictionary).
+fn add_resource(doc: &mut Document, page: ObjectId, category: &[u8], prefix: &str, value: Object) -> Result<String> {
+    let res_ref = match doc.get_dictionary(page)?.get(b"Resources") {
+        Ok(Object::Reference(id)) => Some(*id),
+        Ok(Object::Dictionary(_)) => None,
+        _ => {
+            doc.get_object_mut(page)?.as_dict_mut()?.set("Resources", lopdf::Dictionary::new());
+            None
+        }
+    };
+    let resources = match res_ref {
+        Some(id) => doc.get_dictionary(id)?,
+        None => doc.get_dictionary(page)?.get(b"Resources")?.as_dict()?,
+    };
+    let cat_ref = resources.get(category).and_then(Object::as_reference).ok();
+    let existing: Vec<(Vec<u8>, Object)> = match cat_ref {
+        Some(id) => doc.get_dictionary(id)?.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
+        None => resources.get(category).and_then(Object::as_dict).map(|d| d.iter().map(|(k, v)| (k.clone(), v.clone())).collect()).unwrap_or_default(),
+    };
+    if let Some((k, _)) = existing.iter().find(|(_, v)| *v == value) {
+        return Ok(String::from_utf8_lossy(k).into_owned());
+    }
+    let name = (1..).map(|n| format!("{prefix}{n}")).find(|n| !existing.iter().any(|(k, _)| k == n.as_bytes())).unwrap_or_default();
+    let target = match (cat_ref, res_ref) {
+        (Some(id), _) => doc.get_object_mut(id)?.as_dict_mut()?,
+        (None, res) => {
+            let resources = match res {
+                Some(id) => doc.get_object_mut(id)?.as_dict_mut()?,
+                None => doc.get_object_mut(page)?.as_dict_mut()?.get_mut(b"Resources")?.as_dict_mut()?,
+            };
+            if !resources.get(category).is_ok_and(|o| o.as_dict().is_ok()) {
+                resources.set(category, lopdf::Dictionary::new());
+            }
+            resources.get_mut(category)?.as_dict_mut()?
+        }
+    };
+    target.set(name.as_bytes(), value);
+    Ok(name)
+}
+
+/// The page as shown: its visible box, and the matrix from "display" coordinates (origin at the
+/// bottom left of the page as a viewer shows it, after `/Rotate`) to the page's own space.
+fn display_space(doc: &Document, page: ObjectId) -> ([f32; 2], [f32; 6]) {
+    let rect = ["CropBox", "MediaBox"]
+        .iter()
+        .filter_map(|k| inherited(doc, page, k.as_bytes()))
+        .find_map(|o| {
+            let v: Vec<f32> = o.as_array().ok()?.iter().filter_map(|n| n.as_float().ok()).collect();
+            (v.len() == 4).then(|| [v[0].min(v[2]), v[1].min(v[3]), v[0].max(v[2]), v[1].max(v[3])])
+        })
+        .unwrap_or([0.0, 0.0, 612.0, 792.0]);
+    let [llx, lly, urx, ury] = rect;
+    let (w, h) = (urx - llx, ury - lly);
+    match inherited(doc, page, b"Rotate").and_then(|o| o.as_i64().ok()).unwrap_or(0).rem_euclid(360) {
+        90 => ([h, w], [0.0, 1.0, -1.0, 0.0, urx, lly]),
+        180 => ([w, h], [-1.0, 0.0, 0.0, -1.0, urx, ury]),
+        270 => ([h, w], [0.0, -1.0, 1.0, 0.0, llx, ury]),
+        _ => ([w, h], [1.0, 0.0, 0.0, 1.0, llx, lly]),
+    }
+}
+
+/// Draws over every page: `draw(page number, page count, display size, resource names)` returns
+/// content in display coordinates. The original content is wrapped in q/Q so its graphics state
+/// can't leak into ours. `resources` are `(category, name prefix, object)`.
+fn stamp(
+    input: &Path,
+    tag: &str,
+    resources: impl Fn(&mut Document) -> Vec<(&'static [u8], &'static str, Object)>,
+    draw: impl Fn(u32, u32, [f32; 2], &[String]) -> Vec<u8>,
+) -> Result<PathBuf> {
+    let mut doc = load(input)?;
+    flatten_inherited(&mut doc)?;
+    let wanted = resources(&mut doc);
+    let save_state = doc.add_object(Stream::new(dictionary! {}, b"q\n".to_vec()));
+    let pages = doc.get_pages();
+    let count = pages.len() as u32;
+    for (number, page) in pages {
+        let names = wanted
+            .iter()
+            .map(|(cat, prefix, obj)| add_resource(&mut doc, page, cat, prefix, obj.clone()))
+            .collect::<Result<Vec<_>>>()?;
+        let (size, m) = display_space(&doc, page);
+        let mut ops = format!("\nQ q {} {} {} {} {} {} cm\n", m[0], m[1], m[2], m[3], m[4], m[5]).into_bytes();
+        ops.extend(draw(number, count, size, &names));
+        ops.extend(b"\nQ\n");
+        let ours = doc.add_object(Stream::new(dictionary! {}, ops));
+        let dict = doc.get_object_mut(page)?.as_dict_mut()?;
+        let mut contents = vec![Object::Reference(save_state)];
+        match dict.get(b"Contents") {
+            Ok(Object::Array(a)) => contents.extend(a.iter().cloned()),
+            Ok(other @ Object::Reference(_)) => contents.push(other.clone()),
+            _ => {}
+        }
+        contents.push(Object::Reference(ours));
+        dict.set("Contents", contents);
+    }
+    doc.compress();
+    Ok(write_siblings(input, "pdf", vec![(tag.into(), save(&mut doc)?)])?.remove(0))
+}
+
+fn standard_font(doc: &mut Document, base: &str) -> Object {
+    Object::Reference(doc.add_object(dictionary! {
+        "Type" => "Font", "Subtype" => "Type1", "BaseFont" => base, "Encoding" => "WinAnsiEncoding",
+    }))
+}
+
+fn page_numbers(input: &Path, corner: Corner) -> Result<PathBuf> {
+    stamp(
+        input,
+        "numbered",
+        |doc| vec![(b"Font".as_slice(), "RpNum", standard_font(doc, "Helvetica"))],
+        |n, _, [w, h], names| {
+            let text = n.to_string();
+            let size = (w.min(h) * 0.017).clamp(7.0, 11.0);
+            let tw = text_width(text.as_bytes()) * size;
+            let margin = size * 2.4;
+            let (x, y) = match corner {
+                Corner::BottomCenter => ((w - tw) / 2.0, margin),
+                Corner::BottomRight => (w - margin - tw, margin),
+                Corner::TopRight => (w - margin - tw, h - margin - size * 0.7),
+            };
+            format!("0.25 g BT /{} {size:.2} Tf {x:.2} {y:.2} Td ({text}) Tj ET", names[0]).into_bytes()
+        },
+    )
+}
+
+fn watermark(input: &Path, text: &str) -> Result<PathBuf> {
+    let bytes = win_ansi(text).ok_or_else(|| EngineError::InvalidOption("watermark text must be Latin characters".into()))?;
+    let width = text_width(&bytes);
+    stamp(
+        input,
+        "watermarked",
+        |doc| {
+            let alpha = doc.add_object(dictionary! { "Type" => "ExtGState", "ca" => Object::Real(0.18), "CA" => Object::Real(0.18) });
+            vec![
+                (b"Font".as_slice(), "RpMark", standard_font(doc, "Helvetica-Bold")),
+                (b"ExtGState".as_slice(), "RpAlpha", Object::Reference(alpha)),
+            ]
+        },
+        |_, _, [w, h], names| {
+            // Along the diagonal, as large as fits comfortably.
+            let angle = h.atan2(w);
+            let size = (0.6 * w.hypot(h) / width).min(w.min(h) * 0.3);
+            let (sin, cos) = angle.sin_cos();
+            let mut ops = format!(
+                "/{gs} gs 0.5 g 1 0 0 1 {cx:.2} {cy:.2} cm {cos:.4} {sin:.4} {nsin:.4} {cos:.4} 0 0 cm BT /{font} {size:.2} Tf {x:.2} {y:.2} Td ",
+                gs = names[1], font = names[0], cx = w / 2.0, cy = h / 2.0, nsin = -sin, x = -width * size / 2.0, y = -size * 0.35,
+            )
+            .into_bytes();
+            ops.extend(literal(&bytes));
+            ops.extend(b" Tj ET");
+            ops
+        },
+    )
+}
+
+// ---- text (pdfium) ------------------------------------------------------------------------
+
+/// A line that Markdown would read as syntax (heading, quote, list, rule, table, fence) gets a
+/// backslash; leading spaces are dropped so text doesn't turn into a code block.
+fn markdown_line(line: &str) -> String {
+    let line = line.trim_start();
+    let numbered = line.find(|c: char| !c.is_ascii_digit()).is_some_and(|i| i > 0 && line[i..].starts_with(['.', ')']));
+    if numbered {
+        let i = line.find(|c: char| !c.is_ascii_digit()).unwrap_or(0);
+        return format!("{}\\{}", &line[..i], &line[i..]);
+    }
+    if line.starts_with(['#', '>', '-', '+', '*', '=', '|', '`', '~', '_']) {
+        format!("\\{line}")
+    } else {
+        line.to_string()
+    }
+}
+
+/// PDF -> `.txt` (pages separated by a form feed, like pdftotext) or `.md` (pages separated by
+/// rules, lines escaped). A PDF without a text layer (scans) is an `Empty` error.
+fn to_text(library: &Path, input: &Path, markdown: bool) -> Result<PathBuf> {
+    if !input.is_file() {
+        return Err(EngineError::InputNotFound(input.to_path_buf()));
+    }
+    let pdfium = pdfium(library)?;
+    let err = |e: pdfium_render::prelude::PdfiumError| EngineError::Pdfium(format!("{e:?}"));
+    let doc = pdfium.load_pdf_from_file(input, None).map_err(err)?;
+    let mut pages = Vec::new();
+    for page in doc.pages().iter() {
+        let text = page.text().map_err(err)?.all().replace("\r\n", "\n").replace('\r', "\n");
+        let lines: Vec<String> =
+            text.lines().map(|l| if markdown { markdown_line(l.trim_end()) } else { l.trim_end().to_string() }).collect();
+        pages.push(lines.join("\n").trim_matches('\n').to_string());
+    }
+    if pages.iter().all(|p| p.trim().is_empty()) {
+        return Err(EngineError::Empty("the PDF has no text layer (scanned pages would need OCR)".into()));
+    }
+    let (text, ext) = if markdown { (pages.join("\n\n---\n\n"), "md") } else { (pages.join("\n\x0c\n"), "txt") };
+    Ok(write_siblings(input, ext, vec![("converted".into(), (text + "\n").into_bytes())])?.remove(0))
+}
+
 // ---- rendering (pdfium) -----------------------------------------------------------------
 
 /// pdfium can be bound only once per process, so the first successful binding is shared.
@@ -536,6 +964,15 @@ impl Converter for PdfConverter {
                 op("pdf.rotate.180", "180\u{b0}", "RotateCw"),
             ]),
             catalog::op("pdf.to_image").with_children(render_targets()).available(render),
+            catalog::op("pdf.compress").with_children(PRESETS.iter().map(|(id, label, icon, _)| op(&format!("pdf.compress.{id}"), label, icon)).collect()),
+            catalog::op("pdf.page_numbers").with_children(
+                CORNERS.iter().map(|(id, label, icon, _)| op(&format!("pdf.page_numbers.{id}"), label, icon)).collect(),
+            ),
+            catalog::op("pdf.watermark")
+                .with_children(WATERMARKS.iter().map(|(id, label, _)| op(&format!("pdf.watermark.{id}"), label, "Stamp")).collect()),
+            catalog::op("pdf.to_text")
+                .with_children(vec![op("pdf.to_text.txt", "Plain text", "Text"), op("pdf.to_text.md", "Markdown", "FileCode")])
+                .available(render),
         ]
     }
 
@@ -579,6 +1016,13 @@ impl Converter for PdfConverter {
                 }
                 Ok(out)
             }
+            Action::Text { markdown } => {
+                let library = self.pdfium.as_deref().ok_or_else(|| EngineError::ToolMissing("pdfium".into()))?;
+                inputs.iter().map(|i| to_text(library, i, markdown)).collect()
+            }
+            Action::Compress(preset) => inputs.iter().map(|i| compress(i, preset)).collect(),
+            Action::PageNumbers(corner) => inputs.iter().map(|i| page_numbers(i, corner)).collect(),
+            Action::Watermark(text) => inputs.iter().map(|i| watermark(i, &text)).collect(),
         }
     }
 }
@@ -694,6 +1138,21 @@ mod tests {
             assert!(matches!(parse_action(id, &opts), Err(EngineError::InvalidOption(_))), "{id}");
         }
         assert!(matches!(parse_action("image.rotate.90", &none), Err(EngineError::UnknownOperation(_))));
+        assert_eq!(parse_action("pdf.compress.strong", &none).unwrap(), Action::Compress(PRESETS[2].3));
+        assert_eq!(parse_action("pdf.page_numbers", &with("position", "top_right")).unwrap(), Action::PageNumbers(Corner::TopRight));
+        assert_eq!(parse_action("pdf.watermark.draft", &none).unwrap(), Action::Watermark("DRAFT".into()));
+        assert_eq!(parse_action("pdf.watermark", &with("text", " Entwürfe ")).unwrap(), Action::Watermark("Entwürfe".into()));
+        assert_eq!(parse_action("pdf.to_text.md", &none).unwrap(), Action::Text { markdown: true });
+        for (id, opts) in [
+            ("pdf.compress.max", none.clone()),
+            ("pdf.page_numbers.left", none.clone()),
+            ("pdf.watermark", with("text", "機密")),
+            ("pdf.watermark", with("text", "  ")),
+            ("pdf.watermark.secret", none.clone()),
+            ("pdf.to_text.docx", none.clone()),
+        ] {
+            assert!(matches!(parse_action(id, &opts), Err(EngineError::InvalidOption(_))), "{id} {opts:?}");
+        }
     }
 
     // ---- page operations --------------------------------------------------------------
@@ -855,6 +1314,10 @@ mod tests {
                 ("pdf.extract".into(), true),
                 ("pdf.rotate".into(), true),
                 ("pdf.to_image".into(), false),
+                ("pdf.compress".into(), true),
+                ("pdf.page_numbers".into(), true),
+                ("pdf.watermark".into(), true),
+                ("pdf.to_text".into(), false),
             ]
         );
         let exe = std::env::current_exe().unwrap();
@@ -868,7 +1331,8 @@ mod tests {
         assert!(batch(&[PDF]).is_empty());
         assert_eq!(batch(&["image/png"]), ["pdf.from_images"]);
         assert_eq!(batch(&["image/png", "image/webp"]), ["pdf.from_images"]);
-        let kids: Vec<_> = without.operations(PDF).pop().unwrap().children.into_iter().map(|o| o.id).collect();
+        let to_image = without.operations(PDF).into_iter().find(|o| o.id == "pdf.to_image").unwrap();
+        let kids: Vec<_> = to_image.children.into_iter().map(|o| o.id).collect();
         assert_eq!(kids, ["pdf.to_png.72", "pdf.to_png.150", "pdf.to_png.300", "pdf.to_jpg.72", "pdf.to_jpg.150", "pdf.to_jpg.300"]);
         assert!(batch(&[PDF, "image/png"]).is_empty());
     }
@@ -924,5 +1388,198 @@ mod tests {
         let err = run_with(&c, "pdf.to_png.72", &[fake], &[]).unwrap_err();
         assert!(matches!(err, EngineError::Pdfium(_)), "{err}");
         assert_eq!(std::fs::read_dir(d.path()).unwrap().count(), 1);
+    }
+
+    // ---- compress ---------------------------------------------------------------------
+
+    /// Incompressible pixels, so JPEG quality and size actually matter.
+    fn noise(w: u32, h: u32) -> RgbImage {
+        let mut state = 0x2545_f491_u32;
+        RgbImage::from_fn(w, h, |_, _| {
+            let mut next = || {
+                state ^= state << 13;
+                state ^= state >> 17;
+                state ^= state << 5;
+                state as u8
+            };
+            Rgb([next(), next(), next()])
+        })
+    }
+
+    /// One page showing a q95 JPEG (`jpeg_size`) and a lossless RGB image (`flate_size`) with
+    /// a soft mask; the content stream is stored uncompressed.
+    fn image_pdf(path: &Path, jpeg_size: (u32, u32), flate_size: (u32, u32)) -> PathBuf {
+        let mut doc = Document::with_version("1.4");
+        let mut jpeg = Vec::new();
+        let img = noise(jpeg_size.0, jpeg_size.1);
+        image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg, 95)
+            .encode(img.as_raw(), img.width(), img.height(), image::ExtendedColorType::Rgb8)
+            .unwrap();
+        let photo = doc.add_object(image_stream(jpeg_size.0, jpeg_size.1, "DeviceRGB", Some("DCTDecode"), jpeg));
+        let (fw, fh) = flate_size;
+        let gradient = RgbImage::from_fn(fw, fh, |x, y| Rgb([(x % 256) as u8, (y % 256) as u8, ((x ^ y) % 256) as u8]));
+        let mut mask = image_stream(fw, fh, "DeviceGray", None, vec![200; (fw * fh) as usize]);
+        mask.compress().unwrap();
+        let mask = doc.add_object(mask);
+        let mut art = image_stream(fw, fh, "DeviceRGB", None, gradient.into_raw());
+        art.compress().unwrap();
+        art.dict.set("SMask", mask);
+        let art = doc.add_object(art);
+        let pages_id = doc.new_object_id();
+        let content = doc.add_object(Stream::new(dictionary! {}, b"q 300 0 0 150 0 0 cm /Im0 Do Q q 300 0 0 150 0 150 cm /Im1 Do Q".to_vec()));
+        let page = doc.add_object(dictionary! {
+            "Type" => "Page", "Parent" => pages_id, "Contents" => content,
+            "MediaBox" => vec![0.into(), 0.into(), 300.into(), 300.into()],
+            "Resources" => dictionary! { "XObject" => dictionary! { "Im0" => photo, "Im1" => art } },
+        });
+        doc.objects.insert(pages_id, Object::Dictionary(dictionary! { "Type" => "Pages", "Kids" => vec![page.into()], "Count" => 1 }));
+        let catalog = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages_id });
+        doc.trailer.set("Root", catalog);
+        doc.save(path).unwrap();
+        path.to_path_buf()
+    }
+
+    /// `(name, width, height, filter, has SMask)` of each image XObject on page 1.
+    fn images_of(path: &Path) -> Vec<(String, i64, i64, String, bool)> {
+        let doc = Document::load(path).unwrap();
+        let page = *doc.get_pages().get(&1).unwrap();
+        let resources = doc.get_dictionary(page).unwrap().get(b"Resources").unwrap().as_dict().unwrap();
+        let mut out: Vec<_> = resources
+            .get(b"XObject")
+            .unwrap()
+            .as_dict()
+            .unwrap()
+            .iter()
+            .map(|(name, r)| {
+                let s = doc.get_object(r.as_reference().unwrap()).unwrap().as_stream().unwrap();
+                let num = |k: &[u8]| s.dict.get(k).unwrap().as_i64().unwrap();
+                let filter = s.dict.get(b"Filter").map(|f| String::from_utf8_lossy(f.as_name().unwrap()).into_owned()).unwrap_or_default();
+                (String::from_utf8_lossy(name).into_owned(), num(b"Width"), num(b"Height"), filter, s.dict.has(b"SMask"))
+            })
+            .collect();
+        out.sort();
+        out
+    }
+
+    #[test]
+    fn compress_downsamples_and_recompresses_images() {
+        let d = tempfile::tempdir().unwrap();
+        let input = image_pdf(&d.path().join("scan.pdf"), (1800, 900), (1700, 850));
+        let size = |p: &Path| std::fs::metadata(p).unwrap().len();
+
+        let balanced = run("pdf.compress.balanced", std::slice::from_ref(&input)).unwrap().remove(0);
+        assert_eq!(balanced, d.path().join("scan (compressed).pdf"));
+        assert!(size(&balanced) * 2 < size(&input), "{} vs {}", size(&balanced), size(&input));
+        assert_eq!(
+            images_of(&balanced),
+            [("Im0".into(), 1600, 800, "DCTDecode".into(), false), ("Im1".into(), 1600, 800, "DCTDecode".into(), true)],
+        );
+        let doc = Document::load(&balanced).unwrap();
+        let mask = doc.objects.values().filter_map(|o| o.as_stream().ok()).find(|s| s.dict.get(b"ColorSpace").and_then(Object::as_name).is_ok_and(|n| n == b"DeviceGray")).unwrap();
+        assert_eq!(mask.dict.get(b"Width").unwrap().as_i64().unwrap(), 1700, "soft masks are left lossless");
+
+        let light = run("pdf.compress.light", std::slice::from_ref(&input)).unwrap().remove(0);
+        let imgs = images_of(&light);
+        assert_eq!((imgs[0].1, imgs[0].3.as_str()), (1800, "DCTDecode"), "under 2400 px: re-encoded, not resized");
+        assert_eq!((imgs[1].1, imgs[1].3.as_str()), (1700, "FlateDecode"), "light keeps lossless images lossless");
+        assert!(size(&light) < size(&input));
+    }
+
+    #[test]
+    fn compress_never_makes_a_file_bigger() {
+        let d = tempfile::tempdir().unwrap();
+        let input = make_pdf(&d.path().join("tiny.pdf"), "P", 2, 0);
+        let out = run("pdf.compress.strong", std::slice::from_ref(&input)).unwrap().remove(0);
+        assert!(std::fs::metadata(&out).unwrap().len() <= std::fs::metadata(&input).unwrap().len());
+        assert_eq!(labels(&out), ["P1", "P2"]);
+    }
+
+    // ---- page numbers, watermark ------------------------------------------------------
+
+    fn page_text(path: &Path, n: u32) -> String {
+        let doc = Document::load(path).unwrap();
+        String::from_utf8_lossy(&doc.get_page_content(*doc.get_pages().get(&n).unwrap())).into_owned()
+    }
+
+    #[test]
+    fn page_numbers_are_added_over_each_page() {
+        let d = tempfile::tempdir().unwrap();
+        let input = make_pdf(&d.path().join("doc.pdf"), "P", 3, 0);
+        let out = run("pdf.page_numbers.bottom_center", &[input]).unwrap().remove(0);
+        assert_eq!(out, d.path().join("doc (numbered).pdf"));
+        assert_eq!(labels(&out), ["P1", "P2", "P3"], "original content kept, first");
+        for n in 1..=3 {
+            let text = page_text(&out, n);
+            assert!(text.starts_with("q\n") && text.contains(&format!("({n}) Tj")), "{text}");
+        }
+        // Pages shared one inherited resource dictionary: the font is added to it once.
+        let doc = Document::load(&out).unwrap();
+        let fonts = doc.objects.values().filter(|o| o.as_dict().is_ok_and(|d| d.get(b"BaseFont").is_ok())).count();
+        assert_eq!(fonts, 2, "F1 + one Helvetica for the numbers");
+    }
+
+    #[test]
+    fn watermark_text_is_escaped_and_translucent() {
+        let d = tempfile::tempdir().unwrap();
+        let input = make_pdf(&d.path().join("doc.pdf"), "P", 1, 0);
+        let out = run("pdf.watermark.confidential", std::slice::from_ref(&input)).unwrap().remove(0);
+        assert_eq!(out, d.path().join("doc (watermarked).pdf"));
+        let text = page_text(&out, 1);
+        assert!(text.contains("(CONFIDENTIAL) Tj") && text.contains("/RpAlpha1 gs"), "{text}");
+        let custom = run_with(&PdfConverter { pdfium: None }, "pdf.watermark", &[input], &[("text", "Q3 (draft)")]).unwrap().remove(0);
+        assert!(page_text(&custom, 1).contains(r"(Q3 \(draft\)) Tj"));
+    }
+
+    /// Darkest pixel in a region of a rendered page (255 = all white).
+    fn darkest(img: &image::RgbImage, xs: std::ops::Range<u32>, ys: std::ops::Range<u32>) -> u8 {
+        ys.flat_map(|y| xs.clone().map(move |x| (x, y))).map(|(x, y)| img.get_pixel(x, y).0.into_iter().min().unwrap()).min().unwrap()
+    }
+
+    #[test]
+    fn stamps_follow_page_rotation_when_rendered() {
+        let Some(c) = renderer() else { return };
+        let d = tempfile::tempdir().unwrap();
+        // Rotated 90: shown as a 200x300 portrait; the number must be at its bottom center.
+        let input = make_pdf(&d.path().join("turned.pdf"), "", 1, 90);
+        let numbered = run_with(&c, "pdf.page_numbers.bottom_center", std::slice::from_ref(&input), &[]).unwrap().remove(0);
+        let png = run_with(&c, "pdf.to_png.72", &[numbered], &[]).unwrap().remove(0);
+        let img = image::open(&png).unwrap().to_rgb8();
+        assert_eq!(img.dimensions(), (200, 300));
+        assert!(darkest(&img, 90..110, 270..295) < 160, "number at the bottom center");
+        assert!(darkest(&img, 90..110, 5..30) > 240, "nothing at the top");
+
+        let marked = run_with(&c, "pdf.watermark.draft", &[input], &[]).unwrap().remove(0);
+        let png = run_with(&c, "pdf.to_png.72", &[marked], &[]).unwrap().remove(0);
+        let img = image::open(&png).unwrap().to_rgb8();
+        let center = darkest(&img, 80..120, 130..170);
+        assert!((150..250).contains(&center), "light grey text across the middle, got {center}");
+    }
+
+    // ---- text ---------------------------------------------------------------------------
+
+    #[test]
+    fn markdown_lines_are_escaped() {
+        assert_eq!(markdown_line("# not a heading"), r"\# not a heading");
+        assert_eq!(markdown_line("   - item"), r"\- item");
+        assert_eq!(markdown_line("12. point"), r"12\. point");
+        assert_eq!(markdown_line("2026 was a year"), "2026 was a year");
+        assert_eq!(markdown_line("plain"), "plain");
+    }
+
+    #[test]
+    fn extracts_text_per_page() {
+        let Some(c) = renderer() else { return };
+        let d = tempfile::tempdir().unwrap();
+        let input = make_pdf(&d.path().join("notes.pdf"), "Hello", 2, 0);
+        let txt = run_with(&c, "pdf.to_text.txt", std::slice::from_ref(&input), &[]).unwrap().remove(0);
+        assert_eq!(txt, d.path().join("notes (converted).txt"));
+        assert_eq!(std::fs::read_to_string(&txt).unwrap(), "Hello1\n\x0c\nHello2\n");
+        let md = run_with(&c, "pdf.to_text", &[input], &[("format", "md")]).unwrap().remove(0);
+        assert_eq!(std::fs::read_to_string(&md).unwrap(), "Hello1\n\n---\n\nHello2\n");
+
+        let png = d.path().join("scan.png");
+        RgbImage::from_pixel(20, 20, Rgb([9, 9, 9])).save(&png).unwrap();
+        let scan = run("pdf.from_images.original", &[png]).unwrap().remove(0);
+        assert!(matches!(run_with(&c, "pdf.to_text.txt", &[scan], &[]), Err(EngineError::Empty(_))));
     }
 }

@@ -1,9 +1,10 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import { AnimatePresence } from "framer-motion";
 import { Monitor, Moon, MousePointerClick, Sun, type LucideIcon } from "lucide-react";
-import { listOperations, runOperation, setMockTools, setShowPlanned, type MockTools, type Operation } from "./api";
+import { listOperations, runOperation, setMockTools, setShowPlanned, type MockTools, type Operation, type Options } from "./api";
 import { fileIcon } from "./icons";
 import { LAYOUT_TEST_MIME, SAMPLE_FILES, commonMime, mimeFromFile } from "./mockFiles";
+import { usePrompt } from "./components/CropDialog";
 import { RadialMenu } from "./components/RadialMenu";
 
 type Theme = "system" | "light" | "dark";
@@ -104,15 +105,19 @@ export default function Playground() {
   };
 
   const onConfirm = useCallback(
-    async (op: Operation, parent?: Operation) => {
+    async (op: Operation, parent?: Operation, options?: Options) => {
       if (!menu) return;
-      const out = await runOperation(op, menu.names, parent ? { parent: parent.id } : {});
+      const out = await runOperation(op, menu.names, { ...(parent && { parent: parent.id }), ...options });
       const via = parent ? `${parent.label} › ${op.label}` : op.label;
       const result = out.length === 1 ? out[0] : `${out.length} files`;
-      setLog((l) => [`${menu.file.name} → ${via} → ${result}`, ...l].slice(0, 5));
+      const picked = options ? ` (${Object.entries(options).map(([k, v]) => `${k} ${v}`).join(", ")})` : "";
+      setLog((l) => [`${menu.file.name} → ${via}${picked} → ${result}`, ...l].slice(0, 5));
     },
     [menu],
   );
+
+  const { prompt, element: promptElement } = usePrompt();
+  const onPrompt = useCallback((op: Operation) => prompt(op, menu?.names[0] ?? "", menu?.file.name ?? ""), [menu, prompt]);
 
   const close = useCallback(() => setMenu(null), []);
 
@@ -194,10 +199,12 @@ export default function Playground() {
             file={menu.file}
             operations={menu.operations}
             onConfirm={onConfirm}
+            onPrompt={onPrompt}
             onDismiss={close}
             onDone={close}
           />
         )}
+        {promptElement}
       </AnimatePresence>
     </div>
   );

@@ -4,7 +4,7 @@ import {
   type Variants,
 } from "framer-motion";
 import { X, type LucideIcon } from "lucide-react";
-import type { Operation } from "../api";
+import type { Operation, Options } from "../api";
 import { fileIcon, iconFor } from "../icons";
 import { MORE_ID, RING_SLOTS, menuWedges, ringPage, visibleOperations, type Slot } from "../lib/operations";
 import { TAU, angleFromUp, pickInSpan, pickWedge, polar, sectorPath } from "../lib/radial";
@@ -25,7 +25,7 @@ const MORE_SLOT = TAU / RING_SLOTS;
 /** Minimum slot width for a wedge's sub-options; the arc grows past the wedge to fit them. */
 const SUB_SLOT = TAU / 15;
 
-type Phase = "choosing" | "running" | "done" | "error";
+type Phase = "choosing" | "prompt" | "running" | "done" | "error";
 
 interface Selection {
   hi: number | null;
@@ -57,7 +57,12 @@ export interface RadialMenuProps {
    */
   operations: Operation[];
   /** Runs the chosen operation; `parent` is set when it came from the sub ring. */
-  onConfirm: (op: Operation, parent?: Operation) => Promise<unknown>;
+  onConfirm: (op: Operation, parent?: Operation, options?: Options) => Promise<unknown>;
+  /**
+   * Asks for the options of an operation with a `prompt` (e.g. a crop rectangle); null means
+   * cancelled, which dismisses the menu. Without it, prompted operations just dismiss.
+   */
+  onPrompt?: (op: Operation) => Promise<Options | null>;
   onDismiss: () => void;
   /** Called after the success animation finishes. */
   onDone: () => void;
@@ -70,7 +75,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const labelWidth = (r: number, span: number, fill: number) => 2 * r * Math.sin(Math.min(span, Math.PI) / 2) * fill;
 const spring = { type: "spring", stiffness: 420, damping: 28, mass: 0.8 } as const;
 
-export function RadialMenu({ origin, file, operations: all, onConfirm, onDismiss, onDone, scrim = true }: RadialMenuProps) {
+export function RadialMenu({ origin, file, operations: all, onConfirm, onPrompt, onDismiss, onDone, scrim = true }: RadialMenuProps) {
   const reduced = !!useReducedMotion();
   const uid = useId().replace(/:/g, "");
   const operations = useMemo(() => menuWedges(visibleOperations(all)), [all]);
@@ -171,6 +176,14 @@ export function RadialMenu({ origin, file, operations: all, onConfirm, onDismiss
 
   const confirm = useCallback(
     async (op: Operation, parent?: Operation) => {
+      let options: Options | undefined;
+      if (op.prompt) {
+        // The menu steps aside while the host asks (e.g. the crop dialog), then shows progress.
+        setPhase("prompt");
+        const picked = onPrompt ? await onPrompt(op) : null;
+        if (!picked) return onDismiss();
+        options = picked;
+      }
       setChosen(op.label);
       setPhase("running");
       progress.set(0);
@@ -178,7 +191,7 @@ export function RadialMenu({ origin, file, operations: all, onConfirm, onDismiss
       const later = (fn: () => void, ms: number) => void timers.current.push(window.setTimeout(fn, ms));
       try {
         // Hold the ring on screen long enough to read even when the work is instant.
-        await Promise.all([onConfirm(op, parent), sleep(reduced ? 250 : 700)]);
+        await Promise.all([onConfirm(op, parent, options), sleep(reduced ? 250 : 700)]);
         ramp.stop();
         await animate(progress, 1, { duration: reduced ? 0.1 : 0.25 });
         setPhase("done");
@@ -189,7 +202,7 @@ export function RadialMenu({ origin, file, operations: all, onConfirm, onDismiss
         later(onDismiss, 1100);
       }
     },
-    [onConfirm, onDismiss, onDone, progress, reduced],
+    [onConfirm, onDismiss, onDone, onPrompt, progress, reduced],
   );
 
   const activate = useCallback(
@@ -344,7 +357,8 @@ export function RadialMenu({ origin, file, operations: all, onConfirm, onDismiss
       aria-label={`Convert ${file.name}`}
       variants={rootV}
       initial="hidden"
-      animate={phase === "choosing" ? "open" : "folded"}
+      animate={phase === "choosing" ? "open" : phase === "prompt" ? "hidden" : "folded"}
+      style={phase === "prompt" ? { pointerEvents: "none" } : undefined}
       exit="hidden"
       onPointerMove={onPointerMove}
       onClick={onClick}

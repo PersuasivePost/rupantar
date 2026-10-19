@@ -16,6 +16,17 @@
 //! row is bold, columns are auto-fitted, and fields that are plainly numbers become numeric
 //! cells; anything a spreadsheet would mangle (leading zeros, a leading `+`, more than 15
 //! significant digits, exponents) stays text.
+//!
+//! To JSON (`sheet.to_json`, CSV with the same delimiter suffixes): an array of row objects
+//! keyed by the first row, in column order; blank header cells become `column N`, repeats get
+//! ` (2)`. CSV numbers follow the To XLSX rule, workbook cells keep their types (dates as ISO
+//! text, empty cells `null`). A workbook with several non-empty sheets gives one object keyed
+//! by sheet name. Output: `name (converted).json`.
+//!
+//! CSV rows (`sheet.dedupe`, `sheet.split_rows.<n>` / option `rows`): rows are copied byte for
+//! byte. Dedupe keeps the first of identical rows (`name (deduped).csv`); split writes parts of
+//! at most n data rows, each starting with the header (`name (part N).csv`). The delimiter is
+//! `options.delimiter`, else sniffed from the first line.
 
 use std::path::{Path, PathBuf};
 
@@ -23,12 +34,18 @@ use calamine::{open_workbook_auto, Data, ExcelDateTime, Range, Reader, SheetType
 use rust_xlsxwriter::{Format, Workbook};
 
 use crate::mime::{CSV, ODS, XLS, XLSX};
-use crate::{catalog, create_unique, create_unique_sibling, write_all_or_nothing, Converter, EngineError, Operation, Options, Result};
+use crate::{
+    catalog, create_unique, create_unique_sibling, write_all_or_nothing, write_siblings, Converter, EngineError, Operation,
+    Options, Result,
+};
 
 pub struct SheetConverter;
 
 const TO_CSV: &str = "sheet.to_csv";
 const TO_XLSX: &str = "sheet.to_xlsx";
+const TO_JSON: &str = "sheet.to_json";
+const DEDUPE: &str = "sheet.dedupe";
+const SPLIT_ROWS: &str = "sheet.split_rows";
 /// `(id suffix, byte, label, lucide icon)`.
 const DELIMITERS: [(&str, u8, &str, &str); 3] = [
     ("comma", b',', "Comma", "Columns3"),
@@ -49,6 +66,11 @@ fn with_delimiters(base: &str) -> Operation {
 fn delimiter(id: &str, base: &str, options: &Options) -> Result<u8> {
     let suffix = id.strip_prefix(base).and_then(|r| r.strip_prefix('.'));
     let Some(raw) = options.get("delimiter").map(String::as_str).or(suffix) else { return Ok(b',') };
+    named_delimiter(raw)
+}
+
+/// A delimiter by name (`comma`, `semicolon`, `tab`) or as the character itself.
+fn named_delimiter(raw: &str) -> Result<u8> {
     DELIMITERS
         .iter()
         .find(|(name, byte, ..)| *name == raw || raw.as_bytes() == [*byte])
@@ -239,6 +261,242 @@ fn csv_to_xlsx(input: &Path, delimiter: u8) -> Result<PathBuf> {
     Ok(path)
 }
 
+// ---- JSON -----------------------------------------------------------------------------------
+// Written by hand rather than through serde_json's map so keys keep the header order.
+
+fn json_string(s: &str) -> String {
+    serde_json::to_string(s).unwrap_or_else(|_| "\"\"".into())
+}
+
+/// Header cells as JSON keys: blanks become `column N`, repeats `name (2)`, `name (3)`, ...
+fn unique_keys(header: &[String], width: usize) -> Vec<String> {
+    let mut keys: Vec<String> = Vec::with_capacity(width);
+    for i in 0..width {
+        let base = match header.get(i).map(|h| h.trim()) {
+            Some(h) if !h.is_empty() => h.to_string(),
+            _ => format!("column {}", i + 1),
+        };
+        let mut key = base.clone();
+        let mut n = 1;
+        while keys.contains(&key) {
+            n += 1;
+            key = format!("{base} ({n})");
+        }
+        keys.push(key);
+    }
+    keys
+}
+
+/// An array of objects, one per row; each value is JSON text already, `None` is null.
+fn json_table(keys: &[String], rows: &[Vec<Option<String>>], indent: &str) -> String {
+    if rows.is_empty() {
+        return "[]".into();
+    }
+    let objects: Vec<String> = rows
+        .iter()
+        .map(|row| {
+            let fields: Vec<String> = keys
+                .iter()
+                .enumerate()
+                .map(|(i, k)| {
+                    let v = row.get(i).cloned().flatten().unwrap_or_else(|| "null".into());
+                    format!("{indent}    {}: {v}", json_string(k))
+                })
+                .collect();
+            format!("{indent}  {{\n{}\n{indent}  }}", fields.join(",\n"))
+        })
+        .collect();
+    format!("[\n{}\n{indent}]", objects.join(",\n"))
+}
+
+fn write_json(input: &Path, text: String) -> Result<PathBuf> {
+    Ok(write_siblings(input, "json", vec![("converted".into(), (text + "\n").into_bytes())])?.remove(0))
+}
+
+/// CSV -> JSON: the first row names the keys; plain numbers (as for XLSX) become JSON numbers,
+/// other fields strings (an empty field is `""`); cells missing from short rows are `null`.
+fn csv_to_json(input: &Path, delimiter: u8) -> Result<PathBuf> {
+    if !input.is_file() {
+        return Err(EngineError::InputNotFound(input.to_path_buf()));
+    }
+    let mut reader = csv::ReaderBuilder::new().delimiter(delimiter).has_headers(false).flexible(true).from_path(input)?;
+    let mut records = reader.records();
+    let header: Vec<String> = match records.next() {
+        Some(r) => r?.iter().map(String::from).collect(),
+        None => Vec::new(),
+    };
+    let mut width = header.len();
+    let mut rows = Vec::new();
+    for record in records {
+        let record = record?;
+        width = width.max(record.len());
+        // `as_number` only accepts `-?digits(.digits)?`, which is also a valid JSON number.
+        rows.push(record.iter().map(|f| Some(if as_number(f).is_some() { f.to_string() } else { json_string(f) })).collect());
+    }
+    write_json(input, json_table(&unique_keys(&header, width), &rows, ""))
+}
+
+/// A workbook cell as JSON text; empty cells are `null`.
+fn cell_json(cell: &Data) -> Option<String> {
+    match cell {
+        Data::Empty => None,
+        Data::Int(i) => Some(i.to_string()),
+        Data::Float(f) if f.fract() == 0.0 && f.abs() < 1e15 => Some((*f as i64).to_string()),
+        Data::Float(f) => serde_json::Number::from_f64(*f).map(|n| n.to_string()),
+        Data::Bool(b) => Some(b.to_string()),
+        Data::String(s) => Some(json_string(s)),
+        other => Some(json_string(&cell_text(other))), // dates (ISO 8601), errors (`#N/A`)
+    }
+}
+
+fn range_to_json(range: &Range<Data>, indent: &str) -> String {
+    let mut rows = range.rows();
+    let header: Vec<String> = rows.next().map(|r| r.iter().map(cell_text).collect()).unwrap_or_default();
+    let body: Vec<Vec<Option<String>>> = rows
+        .filter(|r| r.iter().any(|c| *c != Data::Empty))
+        .map(|r| r.iter().map(cell_json).collect())
+        .collect();
+    json_table(&unique_keys(&header, range.width()), &body, indent)
+}
+
+/// XLSX/XLS/ODS -> JSON: one non-empty sheet gives an array of row objects (keys from its first
+/// row; empty rows skipped); several give an object of those arrays keyed by sheet name.
+fn workbook_to_json(input: &Path) -> Result<PathBuf> {
+    if !input.is_file() {
+        return Err(EngineError::InputNotFound(input.to_path_buf()));
+    }
+    let mut book = open_workbook_auto(input)?;
+    let names: Vec<String> =
+        book.sheets_metadata().iter().filter(|s| s.typ == SheetType::WorkSheet).map(|s| s.name.clone()).collect();
+    let mut sheets = Vec::new();
+    for name in names {
+        let range = book.worksheet_range(&name)?;
+        if !range.is_empty() {
+            sheets.push((name, range));
+        }
+    }
+    let text = match sheets.as_slice() {
+        [] => "[]".to_string(),
+        [(_, range)] => range_to_json(range, ""),
+        many => {
+            let fields: Vec<String> =
+                many.iter().map(|(name, range)| format!("  {}: {}", json_string(name), range_to_json(range, "  "))).collect();
+            format!("{{\n{}\n}}", fields.join(",\n"))
+        }
+    };
+    write_json(input, text)
+}
+
+// ---- row operations on CSV ------------------------------------------------------------------
+// Rows are copied byte for byte (quoting, line endings and a BOM stay as they were); parsing
+// is only used to find where rows start and to compare them.
+
+/// The delimiter for dedupe/split: `options.delimiter`, else the most common of `,` `;` tab in
+/// the first line (outside quotes), else a comma.
+fn sniffed_delimiter(bytes: &[u8], options: &Options) -> Result<u8> {
+    if let Some(raw) = options.get("delimiter") {
+        return named_delimiter(raw);
+    }
+    let mut counts = [0usize; 3];
+    let mut quoted = false;
+    for &b in bytes.iter().take(64 * 1024) {
+        match b {
+            b'"' => quoted = !quoted,
+            b'\n' | b'\r' if !quoted => break,
+            _ if !quoted => {
+                if let Some(i) = DELIMITERS.iter().position(|d| d.1 == b) {
+                    counts[i] += 1;
+                }
+            }
+            _ => {}
+        }
+    }
+    let best = (0..3).max_by_key(|&i| (counts[i], std::cmp::Reverse(i))).unwrap_or(0);
+    Ok(if counts[best] == 0 { b',' } else { DELIMITERS[best].1 })
+}
+
+/// A record's raw bytes and its parsed fields.
+type RawRecord<'a> = (&'a [u8], Vec<Vec<u8>>);
+
+/// Each record's bytes (from its start to the next record's start, line ending included) and
+/// its fields. The first record starts at 0 so a BOM stays with it.
+fn byte_records(bytes: &[u8], delimiter: u8) -> Result<Vec<RawRecord<'_>>> {
+    let mut reader = csv::ReaderBuilder::new().delimiter(delimiter).has_headers(false).flexible(true).from_reader(bytes);
+    let mut starts = Vec::new();
+    let mut fields = Vec::new();
+    let mut record = csv::ByteRecord::new();
+    while reader.read_byte_record(&mut record)? {
+        let mut start = if starts.is_empty() { 0 } else { record.position().map_or(0, |p| p.byte() as usize) };
+        // csv reports a record after CRLF as starting at the LF; a record never starts with a
+        // line break, so the previous record keeps its whole line ending (and any blank lines).
+        while matches!(bytes.get(start), Some(b'\r' | b'\n')) {
+            start += 1;
+        }
+        starts.push(start);
+        fields.push(record.iter().map(<[u8]>::to_vec).collect());
+    }
+    let ends = starts.iter().skip(1).copied().chain(std::iter::once(bytes.len()));
+    Ok(starts.iter().zip(ends).map(|(&s, e)| &bytes[s..e]).zip(fields).collect())
+}
+
+fn read_csv(input: &Path) -> Result<Vec<u8>> {
+    if !input.is_file() {
+        return Err(EngineError::InputNotFound(input.to_path_buf()));
+    }
+    Ok(std::fs::read(input)?)
+}
+
+/// Removes rows that repeat an earlier row (compared field by field, so `"1",2` equals `1,2`);
+/// the first occurrence stays, in place.
+fn dedupe(input: &Path, options: &Options) -> Result<PathBuf> {
+    let bytes = read_csv(input)?;
+    let mut seen = std::collections::HashSet::new();
+    let mut out = Vec::with_capacity(bytes.len());
+    for (raw, fields) in byte_records(&bytes, sniffed_delimiter(&bytes, options)?)? {
+        if seen.insert(fields) {
+            out.extend_from_slice(raw);
+        }
+    }
+    Ok(write_siblings(input, "csv", vec![("deduped".into(), out)])?.remove(0))
+}
+
+/// Splits into `name (part N).csv` files of at most `rows` data rows each, every part starting
+/// with the header row. All parts or none are written.
+fn split_rows(input: &Path, rows: usize, options: &Options) -> Result<Vec<PathBuf>> {
+    let bytes = read_csv(input)?;
+    let records = byte_records(&bytes, sniffed_delimiter(&bytes, options)?)?;
+    let Some(((header, _), body)) = records.split_first() else {
+        return Err(EngineError::Empty("the CSV is empty".into()));
+    };
+    if body.is_empty() {
+        return Err(EngineError::Empty("the CSV has only a header row".into()));
+    }
+    let mut header = header.to_vec();
+    if !header.ends_with(b"\n") && !header.ends_with(b"\r") {
+        header.extend_from_slice(b"\r\n");
+    }
+    let parts = body
+        .chunks(rows)
+        .enumerate()
+        .map(|(i, chunk)| {
+            let mut part = header.clone();
+            chunk.iter().for_each(|(raw, _)| part.extend_from_slice(raw));
+            (format!("part {}", i + 1), part)
+        })
+        .collect();
+    write_siblings(input, "csv", parts)
+}
+
+/// Rows per part: `options.rows`, else the id suffix (`sheet.split_rows.1000`).
+fn rows_per_part(id: &str, options: &Options) -> Result<usize> {
+    let raw = options.get("rows").map(String::as_str).or_else(|| id.strip_prefix(SPLIT_ROWS)?.strip_prefix('.'));
+    let raw = raw.ok_or_else(|| EngineError::InvalidOption("missing `rows`".into()))?;
+    match raw.trim().parse::<usize>() {
+        Ok(n @ 1..=100_000_000) => Ok(n),
+        _ => Err(EngineError::InvalidOption(format!("`rows` is not valid: `{raw}`"))),
+    }
+}
+
 impl Converter for SheetConverter {
     fn can_handle(&self, mime: &str) -> bool {
         is_workbook(mime) || mime == CSV
@@ -246,9 +504,18 @@ impl Converter for SheetConverter {
 
     fn operations(&self, mime: &str) -> Vec<Operation> {
         if is_workbook(mime) {
-            vec![with_delimiters(TO_CSV)]
+            vec![with_delimiters(TO_CSV), catalog::op(TO_JSON)]
         } else if mime == CSV {
-            vec![with_delimiters(TO_XLSX)]
+            let split = [(100, "100 rows"), (1000, "1,000 rows"), (10_000, "10,000 rows")]
+                .into_iter()
+                .map(|(n, label)| Operation::new(&format!("{SPLIT_ROWS}.{n}"), label, "Rows3"))
+                .collect();
+            vec![
+                with_delimiters(TO_XLSX),
+                with_delimiters(TO_JSON),
+                catalog::op(DEDUPE),
+                catalog::op(SPLIT_ROWS).with_children(split),
+            ]
         } else {
             Vec::new()
         }
@@ -266,6 +533,21 @@ impl Converter for SheetConverter {
         } else if is_op(id, TO_XLSX) {
             let delim = delimiter(id, TO_XLSX, options)?;
             inputs.iter().map(|input| csv_to_xlsx(input, delim)).collect()
+        } else if is_op(id, TO_JSON) {
+            let delim = delimiter(id, TO_JSON, options)?;
+            inputs
+                .iter()
+                .map(|input| if crate::mime::detect(input) == CSV { csv_to_json(input, delim) } else { workbook_to_json(input) })
+                .collect()
+        } else if id == DEDUPE {
+            inputs.iter().map(|input| dedupe(input, options)).collect()
+        } else if is_op(id, SPLIT_ROWS) {
+            let rows = rows_per_part(id, options)?;
+            let mut out = Vec::new();
+            for input in inputs {
+                out.extend(split_rows(input, rows, options)?);
+            }
+            Ok(out)
         } else {
             Err(EngineError::UnknownOperation(op.id.clone()))
         }
@@ -736,15 +1018,133 @@ mod tests {
     #[test]
     fn operations_per_mime_and_foreign_ops() {
         let ids = |m: &str| SheetConverter.operations(m).into_iter().map(|o| o.id).collect::<Vec<_>>();
-        assert_eq!(ids(XLSX), [TO_CSV]);
-        assert_eq!(ids(XLS), [TO_CSV]);
-        assert_eq!(ids(ODS), [TO_CSV]);
-        assert_eq!(ids(CSV), [TO_XLSX]);
-        let kids = |m: &str| SheetConverter.operations(m)[0].children.iter().map(|o| o.id.clone()).collect::<Vec<_>>();
-        assert_eq!(kids(XLSX), ["sheet.to_csv.comma", "sheet.to_csv.semicolon", "sheet.to_csv.tab"]);
-        assert_eq!(kids(CSV), ["sheet.to_xlsx.comma", "sheet.to_xlsx.semicolon", "sheet.to_xlsx.tab"]);
+        assert_eq!(ids(XLSX), [TO_CSV, TO_JSON]);
+        assert_eq!(ids(XLS), [TO_CSV, TO_JSON]);
+        assert_eq!(ids(ODS), [TO_CSV, TO_JSON]);
+        assert_eq!(ids(CSV), [TO_XLSX, TO_JSON, DEDUPE, SPLIT_ROWS]);
+        let kids = |m: &str, i: usize| SheetConverter.operations(m)[i].children.iter().map(|o| o.id.clone()).collect::<Vec<_>>();
+        assert_eq!(kids(XLSX, 0), ["sheet.to_csv.comma", "sheet.to_csv.semicolon", "sheet.to_csv.tab"]);
+        assert_eq!(kids(CSV, 0), ["sheet.to_xlsx.comma", "sheet.to_xlsx.semicolon", "sheet.to_xlsx.tab"]);
+        assert_eq!(kids(CSV, 1), ["sheet.to_json.comma", "sheet.to_json.semicolon", "sheet.to_json.tab"]);
+        assert_eq!(kids(CSV, 3), ["sheet.split_rows.100", "sheet.split_rows.1000", "sheet.split_rows.10000"]);
+        assert!(kids(XLSX, 1).is_empty());
         assert!(!SheetConverter.can_handle("image/png"));
         let err = run("image.convert.png", &[]).unwrap_err();
         assert!(matches!(err, EngineError::UnknownOperation(_)));
+    }
+
+    // ---- JSON -------------------------------------------------------------------------
+
+    fn json(path: &Path) -> serde_json::Value {
+        serde_json::from_str(&read(path)).unwrap()
+    }
+
+    #[test]
+    fn csv_to_json_types_keys_and_ragged_rows() {
+        let d = tempfile::tempdir().unwrap();
+        let input = d.path().join("people.csv");
+        std::fs::write(&input, "\u{feff}name,age,zip,,name\r\nAnn,31,007,x,dup\r\nBob\r\n\"Cy, Jr\",-2.5,,,\r\n").unwrap();
+        let out = run("sheet.to_json", std::slice::from_ref(&input)).unwrap().remove(0);
+        assert_eq!(out, d.path().join("people (converted).json"));
+        let v = json(&out);
+        assert_eq!(v[0], serde_json::json!({"name": "Ann", "age": 31, "zip": "007", "column 4": "x", "name (2)": "dup"}));
+        assert_eq!(v[1], serde_json::json!({"name": "Bob", "age": null, "zip": null, "column 4": null, "name (2)": null}));
+        assert_eq!(v[2]["name"], "Cy, Jr");
+        assert_eq!(v[2]["age"], -2.5);
+        assert_eq!(v[2]["zip"], "", "an empty field is an empty string");
+        let text = read(&out);
+        assert!(text.find("\"age\"").unwrap() < text.find("\"zip\"").unwrap(), "keys keep column order");
+
+        let semi = d.path().join("semi.csv");
+        std::fs::write(&semi, "a;b\n1;2\n").unwrap();
+        let v = json(&run("sheet.to_json.semicolon", &[semi]).unwrap()[0]);
+        assert_eq!(v, serde_json::json!([{"a": 1, "b": 2}]));
+
+        let empty = d.path().join("empty.csv");
+        std::fs::write(&empty, "").unwrap();
+        assert_eq!(json(&run("sheet.to_json", &[empty]).unwrap()[0]), serde_json::json!([]));
+    }
+
+    #[test]
+    fn workbook_to_json_keeps_cell_types_and_sheets() {
+        let d = tempfile::tempdir().unwrap();
+        let path = d.path().join("book.xlsx");
+        let people: Fill = &|ws| {
+            ws.write(0, 0, "Name").unwrap();
+            ws.write(0, 1, "Score").unwrap();
+            ws.write(0, 2, "Active").unwrap();
+            ws.write(1, 0, "Ann").unwrap();
+            ws.write(1, 1, 2.0).unwrap();
+            ws.write(1, 2, true).unwrap();
+            ws.write(3, 0, "Bob").unwrap(); // row 3 empty in between: skipped
+            ws.write(3, 1, 1.5).unwrap();
+        };
+        let other: Fill = &|ws| {
+            ws.write(0, 0, "x").unwrap();
+            ws.write(1, 0, "y").unwrap();
+        };
+        let blank: Fill = &|_| {};
+        xlsx_fixture(&path, &[("People", people), ("Blank", blank), ("Other", other)]);
+        let v = json(&run("sheet.to_json", &[path]).unwrap()[0]);
+        assert_eq!(
+            v,
+            serde_json::json!({
+                "People": [{"Name": "Ann", "Score": 2, "Active": true}, {"Name": "Bob", "Score": 1.5, "Active": null}],
+                "Other": [{"x": "y"}],
+            })
+        );
+
+        let single = d.path().join("single.xlsx");
+        xlsx_fixture(&single, &[("Only", other)]);
+        assert_eq!(json(&run("sheet.to_json", &[single]).unwrap()[0]), serde_json::json!([{"x": "y"}]));
+    }
+
+    // ---- dedupe / split ---------------------------------------------------------------
+
+    #[test]
+    fn dedupe_keeps_first_rows_byte_for_byte() {
+        let d = tempfile::tempdir().unwrap();
+        let input = d.path().join("list.csv");
+        std::fs::write(&input, "\u{feff}a,b\r\n1,2\r\n3,4\r\n\"1\",2\r\n1,2\r\n\"x,y\",5\r\n3,4").unwrap();
+        let out = run("sheet.dedupe", &[input]).unwrap().remove(0);
+        assert_eq!(out, d.path().join("list (deduped).csv"));
+        assert_eq!(read(&out), "\u{feff}a,b\r\n1,2\r\n3,4\r\n\"x,y\",5\r\n");
+
+        let semi = d.path().join("semi.csv");
+        std::fs::write(&semi, "a;b\n1;2\n1;2\n1;3\n").unwrap();
+        assert_eq!(read(&run("sheet.dedupe", &[semi]).unwrap()[0]), "a;b\n1;2\n1;3\n", "delimiter sniffed");
+    }
+
+    #[test]
+    fn split_rows_repeats_the_header_in_every_part() {
+        let d = tempfile::tempdir().unwrap();
+        let input = d.path().join("big.csv");
+        std::fs::write(&input, "id,v\n1,a\n2,b\n3,\"multi\nline\"\n4,d\n5,e").unwrap();
+        let out = run("sheet.split_rows.2", std::slice::from_ref(&input)).unwrap();
+        let names: Vec<_> = (1..=3).map(|n| d.path().join(format!("big (part {n}).csv"))).collect();
+        assert_eq!(out, names);
+        assert_eq!(read(&out[0]), "id,v\n1,a\n2,b\n");
+        assert_eq!(read(&out[1]), "id,v\n3,\"multi\nline\"\n4,d\n");
+        assert_eq!(read(&out[2]), "id,v\n5,e");
+        let out = run_with("sheet.split_rows", &[input], &[("rows", "10")]).unwrap();
+        assert_eq!(out.len(), 1);
+
+        let header_only = d.path().join("h.csv");
+        std::fs::write(&header_only, "id,v").unwrap();
+        assert!(matches!(run("sheet.split_rows.2", &[header_only]), Err(EngineError::Empty(_))));
+        for bad in ["sheet.split_rows.0", "sheet.split_rows.x", "sheet.split_rows"] {
+            assert!(matches!(run(bad, &[d.path().join("big.csv")]), Err(EngineError::InvalidOption(_))), "{bad}");
+        }
+    }
+
+    #[test]
+    fn delimiter_sniffing() {
+        let none = Options::new();
+        assert_eq!(sniffed_delimiter(b"a;b;c\n1,2", &none).unwrap(), b';');
+        assert_eq!(sniffed_delimiter(b"a\tb\n", &none).unwrap(), b'\t');
+        assert_eq!(sniffed_delimiter(b"\"x;y;z\",b\n", &none).unwrap(), b',', "quoted text doesn't count");
+        assert_eq!(sniffed_delimiter(b"single", &none).unwrap(), b',');
+        let semi = Options::from([("delimiter".to_string(), "semicolon".to_string())]);
+        assert_eq!(sniffed_delimiter(b"a,b", &semi).unwrap(), b';', "the option wins");
     }
 }

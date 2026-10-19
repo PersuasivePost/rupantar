@@ -12,7 +12,9 @@ pub mod catalog;
 pub mod copy;
 pub mod documents;
 pub mod images;
+mod metadata;
 pub mod mime;
+pub mod office;
 pub mod pdf;
 pub mod sheets;
 pub mod tools;
@@ -47,6 +49,9 @@ pub enum EngineError {
     Pdf(#[from] lopdf::Error),
     #[error("pdf rendering failed: {0}")]
     Pdfium(String),
+    /// The input has nothing the operation can produce (e.g. no images to extract).
+    #[error("{0}")]
+    Empty(String),
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
 }
@@ -72,6 +77,10 @@ pub struct Operation {
     pub priority: Option<u16>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub group: Option<catalog::Group>,
+    /// The UI must ask for options before running this (e.g. `crop`: a rectangle). Such
+    /// operations are offered for single-file selections only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt: Option<String>,
 }
 
 fn yes() -> bool {
@@ -88,6 +97,7 @@ impl Operation {
             available: true,
             priority: None,
             group: None,
+            prompt: None,
         }
     }
 
@@ -98,6 +108,11 @@ impl Operation {
 
     pub fn available(mut self, available: bool) -> Self {
         self.available = available;
+        self
+    }
+
+    pub fn with_prompt(mut self, prompt: &str) -> Self {
+        self.prompt = Some(prompt.into());
         self
     }
 }
@@ -190,6 +205,7 @@ impl Registry {
         r.register(Box::new(images::ImageConverter));
         r.register(Box::new(sheets::SheetConverter));
         r.register(Box::new(pdf::PdfConverter::new(config)));
+        r.register(Box::new(office::OfficeConverter));
         r.register(Box::new(documents::DocumentConverter::new(config)));
         r.register(Box::new(copy::CopyConverter));
         r
@@ -233,12 +249,16 @@ impl Registry {
     }
 
     /// Operations for a selection (one mime per file): the batch operations plus the per-file
-    /// operations every selected type offers, in priority order (ties: batch first).
+    /// operations every selected type offers, in priority order (ties: batch first). Operations
+    /// with a `prompt` (their options are picked for one file) need a single-file selection.
     pub fn operations_for(&self, mimes: &[String]) -> Vec<Operation> {
         let Some((first, rest)) = mimes.split_first() else { return Vec::new() };
         let mut common = self.operations(first);
         for m in rest.iter().filter(|m| *m != first) {
             common = intersect(common, &self.operations(m));
+        }
+        if mimes.len() > 1 {
+            common.retain(|o| o.prompt.is_none());
         }
         let mut ops = self.batch_operations(mimes);
         for op in common {
@@ -317,6 +337,26 @@ pub fn create_unique(dir: &Path, name: impl Fn(u32) -> String) -> Result<(File, 
     Err(std::io::Error::new(ErrorKind::AlreadyExists, "no free output name").into())
 }
 
+/// Reserves `stem (tag).ext` next to `input` for each `(tag, bytes)` (`stem (tag 2).ext`, ...
+/// when taken) and writes them all, or none.
+pub(crate) fn write_siblings(input: &Path, ext: &str, outputs: Vec<(String, Vec<u8>)>) -> Result<Vec<PathBuf>> {
+    let dir = input.parent().unwrap_or_else(|| Path::new(""));
+    let stem = input.file_stem().and_then(|s| s.to_str()).unwrap_or("output");
+    let mut files = Vec::new();
+    for (tag, bytes) in outputs {
+        match create_unique(dir, |n| sibling_name(stem, &tag, n, Some(ext))) {
+            Ok((file, path)) => files.push((file, path, bytes)),
+            Err(e) => {
+                for (_, p, _) in &files {
+                    let _ = std::fs::remove_file(p);
+                }
+                return Err(e);
+            }
+        }
+    }
+    write_all_or_nothing(files)
+}
+
 /// Creates every output or none: files written before a failure are removed.
 pub(crate) fn write_all_or_nothing(outputs: Vec<(std::fs::File, PathBuf, Vec<u8>)>) -> Result<Vec<PathBuf>> {
     let paths: Vec<PathBuf> = outputs.iter().map(|(_, p, _)| p.clone()).collect();
@@ -391,9 +431,9 @@ mod tests {
     #[test]
     fn registry_offers_spreadsheet_ops() {
         let r = Registry::with_defaults();
-        assert_eq!(visible(&r.operations(mime::CSV)), ["sheet.to_xlsx", "copy"]);
+        assert_eq!(visible(&r.operations(mime::CSV)), ["sheet.to_xlsx", "sheet.to_json", "sheet.dedupe", "sheet.split_rows", "copy"]);
         for m in [mime::XLSX, mime::XLS, mime::ODS] {
-            assert_eq!(visible(&r.operations(m)), ["sheet.to_csv", "copy"]);
+            assert_eq!(visible(&r.operations(m)), ["sheet.to_csv", "sheet.to_json", "copy"]);
         }
     }
 
@@ -412,9 +452,24 @@ mod tests {
             }
         }
         // Implemented ops are available (all tools present); planned ones aren't and have no children.
-        assert_eq!(visible(&r.operations(mime::PDF)), ["pdf.to_image", "pdf.split", "pdf.rotate", "pdf.extract", "copy"]);
-        assert_eq!(visible(&r.operations("image/png")), ["image.compress", "image.resize", "image.convert", "image.rotate", "copy"]);
-        assert_eq!(visible(&r.operations(mime::DOCX)), ["doc.to_pdf", "doc.to_md", "doc.to_odt", "doc.to_epub", "copy"]);
+        assert_eq!(
+            visible(&r.operations(mime::PDF)),
+            [
+                "pdf.compress", "pdf.to_image", "pdf.split", "pdf.rotate", "pdf.extract", "pdf.to_text", "pdf.watermark",
+                "pdf.page_numbers", "copy",
+            ]
+        );
+        assert_eq!(
+            visible(&r.operations("image/png")),
+            [
+                "image.compress", "image.resize", "image.convert", "image.crop", "image.rotate", "image.grayscale",
+                "image.strip_metadata", "copy",
+            ]
+        );
+        assert_eq!(
+            visible(&r.operations(mime::DOCX)),
+            ["doc.to_pdf", "doc.to_md", "doc.extract_images", "doc.to_odt", "doc.to_epub", "copy"]
+        );
         assert_eq!(visible(&r.operations(mime::MARKDOWN)), ["doc.to_pdf", "doc.to_docx", "doc.to_html", "doc.to_epub", "copy"]);
         assert_eq!(visible(&r.operations(mime::HTML)), ["doc.to_pdf", "doc.to_docx", "doc.to_md", "copy"]);
         for m in [mime::PPTX, mime::PPT, mime::ODP, mime::DOC, mime::ODT] {
@@ -451,17 +506,26 @@ mod tests {
         let one = r.operations_for(&mimes(&["image/png"]));
         let at = one.iter().position(|o| o.id == "pdf.from_images").unwrap();
         assert_eq!(ids(&one[..at]), ids(&r.operations("image/png"))[..at]);
-        assert_eq!(visible(&one)[..5], ["image.compress", "image.resize", "image.convert", "image.rotate", "pdf.from_images"]);
+        assert_eq!(visible(&one)[..5], ["image.compress", "image.resize", "image.convert", "image.crop", "image.rotate"]);
+        // Two or more: "To PDF" first, and crop (its rectangle is picked on one image) is gone.
         let two = r.operations_for(&mimes(&["image/png", "image/png"]));
         assert_eq!(two[0].id, "pdf.from_images");
-        assert_eq!(two[1..], r.operations("image/png"));
+        let single: Vec<Operation> = r.operations("image/png").into_iter().filter(|o| o.prompt.is_none()).collect();
+        assert_eq!(two[1..], single);
+        assert!(one.iter().any(|o| o.prompt.as_deref() == Some("crop")));
         assert_eq!(ids(&r.operations_for(&mimes(&[mime::PDF]))), ids(&r.operations(mime::PDF)), "merge needs two");
         let pdfs = r.operations_for(&mimes(&[mime::PDF, mime::PDF]));
         assert_eq!((pdfs[0].id.as_str(), pdfs[0].priority), ("pdf.merge", Some(0)));
 
         // PNG converts to JPG/WebP, JPEG to PNG/WebP: together only WebP is valid for both.
         let mixed = r.operations_for(&mimes(&["image/png", "image/jpeg"]));
-        assert_eq!(visible(&mixed), ["pdf.from_images", "image.compress", "image.resize", "image.convert", "image.rotate", "copy"]);
+        assert_eq!(
+            visible(&mixed),
+            [
+                "pdf.from_images", "image.compress", "image.resize", "image.convert", "image.rotate", "image.grayscale",
+                "image.strip_metadata", "copy",
+            ]
+        );
         let convert = mixed.iter().find(|o| o.id == "image.convert").unwrap();
         assert_eq!(ids(&convert.children), ["image.convert.webp"]);
 

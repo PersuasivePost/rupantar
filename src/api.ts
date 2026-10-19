@@ -20,6 +20,8 @@ export interface Operation {
   priority?: number;
   /** What the op does (convert, optimize, pages, edit, extract, data, security, file). */
   group?: string;
+  /** The UI asks for options first (`crop`: a rectangle). Only offered for one file. */
+  prompt?: string;
 }
 
 export type Options = Record<string, string>;
@@ -35,6 +37,18 @@ export async function runOperation(op: Operation, inputs: string[], options: Opt
   if (isTauri()) return invoke<string[]>("run_operation", { op, inputs, options });
   await new Promise((r) => setTimeout(r, 400));
   return inputs.map((p) => p.replace(/(\.[^./]+)?$/, ` (${op.id})$1`));
+}
+
+/** A downscaled image for picking a crop rectangle. `width`/`height` are the original's pixels. */
+export interface ImagePreview {
+  src: string;
+  width: number;
+  height: number;
+}
+
+export async function previewImage(path: string): Promise<ImagePreview> {
+  if (isTauri()) return invoke<ImagePreview>("preview_image", { path });
+  return mockPreview(path);
 }
 
 // ---- Mocks --------------------------------------------------------------------------------
@@ -110,13 +124,45 @@ function withAvailability(ops: Operation[]): Operation[] {
   const needs = (id: string) =>
     (id.startsWith("doc.") && !mockTools.pandoc) ||
     (id === "doc.to_pdf" && !mockTools.typst) ||
-    (/^pdf\.to_(image|png|jpg)/.test(id) && !mockTools.pdfium);
+    (/^pdf\.to_(image|png|jpg|text)/.test(id) && !mockTools.pdfium);
   // The snapshot is taken with every tool present, so `available: false` there means planned.
   return ops.map((o) => ({
     ...o,
     available: (showPlanned || o.available !== false) && !needs(o.id),
     ...(o.children && { children: withAvailability(o.children) }),
   }));
+}
+
+/** A drawn stand-in photo, reported at 4x its preview size like a real downscaled preview. */
+function mockPreview(path: string): ImagePreview {
+  const [w, h] = [800, 533];
+  const canvas = document.createElement("canvas");
+  canvas.width = w;
+  canvas.height = h;
+  const g = canvas.getContext("2d")!;
+  const sky = g.createLinearGradient(0, 0, 0, h);
+  sky.addColorStop(0, "#7dd3fc");
+  sky.addColorStop(0.6, "#fde68a");
+  sky.addColorStop(1, "#f97316");
+  g.fillStyle = sky;
+  g.fillRect(0, 0, w, h);
+  g.fillStyle = "#fff7d6";
+  g.beginPath();
+  g.arc(w * 0.68, h * 0.42, 54, 0, Math.PI * 2);
+  g.fill();
+  g.fillStyle = "#1e3a5f";
+  g.beginPath();
+  g.moveTo(0, h);
+  g.lineTo(w * 0.22, h * 0.55);
+  g.lineTo(w * 0.42, h * 0.78);
+  g.lineTo(w * 0.62, h * 0.5);
+  g.lineTo(w, h * 0.85);
+  g.lineTo(w, h);
+  g.fill();
+  g.fillStyle = "rgba(255,255,255,0.85)";
+  g.font = "600 22px system-ui, sans-serif";
+  g.fillText(path.split(/[\\/]/).pop() ?? path, 18, 34);
+  return { src: canvas.toDataURL("image/jpeg", 0.85), width: w * 4, height: h * 4 };
 }
 
 // ---- Desktop shell ------------------------------------------------------------------------

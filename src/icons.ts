@@ -1,5 +1,5 @@
 import {
-  ArrowDownAZ, ArrowRightToLine, BookOpen, Braces, ChevronsRight, Circle, Columns3, Copy, CopyMinus,
+  ArrowDown, ArrowDownAZ, ArrowDownRight, ArrowRightToLine, ArrowUpRight, Contrast, FlipHorizontal2, FlipVertical2, BookOpen, Braces, ChevronsRight, Circle, Columns3, Copy, CopyMinus,
   Crop, Ellipsis, Eraser, EyeOff, Feather, File, FileCode, FileDigit, FileImage, FileOutput, FilePen,
   FileSpreadsheet, FileText, FileType, Files, Gauge, Globe, Hash, Image, ImageDown, Images,
   LayoutGrid, ListOrdered, Lock, Maximize2, Merge, Minimize2, Monitor, Percent, Presentation,
@@ -13,7 +13,7 @@ import { LAYOUT_TEST_MIME, MIME } from "./mockFiles";
 // (src/generated/engine-operations.json), a mock in api.ts, or a menu control
 // (More / Back / page, in lib/operations.ts) must be here.
 export const ICONS: Record<string, LucideIcon> = {
-  ArrowDownAZ, ArrowRightToLine, BookOpen, Braces, ChevronsRight, Columns3, Copy, CopyMinus, Crop,
+  ArrowDown, ArrowDownAZ, ArrowDownRight, ArrowRightToLine, ArrowUpRight, Contrast, FlipHorizontal2, FlipVertical2, BookOpen, Braces, ChevronsRight, Columns3, Copy, CopyMinus, Crop,
   Ellipsis, Eraser, EyeOff, Feather, FileCode, FileDigit, FileImage, FileOutput, FilePen,
   FileSpreadsheet, FileText, FileType, Files, Gauge, Globe, Hash, Image, ImageDown, Images,
   ListOrdered, Lock, Maximize2, Merge, Minimize2, Monitor, Percent, Presentation, Printer,

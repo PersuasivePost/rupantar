@@ -27,6 +27,7 @@ export function intersectOperations(a: Operation[], b: Operation[]): Operation[]
 /**
  * Operations for a selection (one mime per file): the batch operations (e.g. "Merge") plus the
  * per-file operations every selected type offers, in priority order (ties: batch first).
+ * Prompted operations are single-file only.
  */
 export function operationsFor(
   mimes: string[],
@@ -37,6 +38,8 @@ export function operationsFor(
   const [first, ...rest] = mimes;
   let common = perType(first);
   for (const m of new Set(rest)) if (m !== first) common = intersectOperations(common, perType(m));
+  // A prompted op's options (e.g. a crop rectangle) are picked on one file.
+  if (mimes.length > 1) common = common.filter((o) => !o.prompt);
   const ops = batch(mimes);
   for (const op of common) if (!ops.some((o) => o.id === op.id)) ops.push(op);
   return byPriority(ops);

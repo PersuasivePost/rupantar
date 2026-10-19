@@ -5,6 +5,7 @@ import {
   describeFiles, frontendReady, hideRadial, listOperations, onFilesDropped, onSummon,
   runOperation, setHideOnBlur, type FileBatch, type Operation, type SummonPayload,
 } from "./api";
+import { usePrompt } from "./components/CropDialog";
 import { RadialMenu } from "./components/RadialMenu";
 
 type Origin = { x: number; y: number };
@@ -20,6 +21,7 @@ const EXIT_MS = 380;
 export default function RadialHost() {
   const [state, setState] = useState<State>({ kind: "idle" });
   const [dragOver, setDragOver] = useState(false);
+  const { prompt, element: promptElement } = usePrompt();
   const origin = useRef<Origin>({ x: 300, y: 300 });
   const nextId = useRef(1);
   const hideTimer = useRef<number>();
@@ -97,13 +99,15 @@ export default function RadialHost() {
           origin={state.origin}
           file={{ name: state.batch.label, mime: state.batch.mime }}
           operations={state.operations}
-          onConfirm={(op, parent) =>
-            runOperation(op, state.batch.paths, parent ? { parent: parent.id } : {})
+          onConfirm={(op, parent, options) =>
+            runOperation(op, state.batch.paths, { ...(parent && { parent: parent.id }), ...options })
           }
+          onPrompt={(op) => prompt(op, state.batch.paths[0], state.batch.label)}
           onDismiss={close}
           onDone={close}
         />
       )}
+      {promptElement}
     </AnimatePresence>
   );
 }

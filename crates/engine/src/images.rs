@@ -1,10 +1,15 @@
 //! Image operations (PNG / JPEG / WebP) built on the `image` crate.
 //!
 //! Operation ids are `image.<action>[.<param>[.<value>]]`, e.g. `image.convert.jpg`,
-//! `image.resize.pct.50`, `image.resize.max.1920`, `image.compress.70`, `image.rotate.90`.
+//! `image.resize.pct.50`, `image.resize.max.1920`, `image.compress.70`, `image.rotate.90`,
+//! `image.flip.h|v` (option `axis`), `image.grayscale`, `image.strip_metadata`.
 //! A value can also come from `options` (which wins over the id), so the parent ids work too:
 //! `image.resize.pct` + `{percent: "50"}`. `image.crop` takes `x`, `y`, `width`, `height`
-//! options; it has no menu entry because the rectangle needs its own UI.
+//! options in original pixels; its operation has `prompt: "crop"`, so the UI asks for the
+//! rectangle first (over [`preview`]).
+//!
+//! Strip metadata never decodes: see `metadata` (EXIF orientation is kept). Greyscale images
+//! are written as single-channel JPEGs.
 //!
 //! Limitation: the `image` crate only writes *lossless* WebP, so WebP output ignores quality
 //! and any request for lossy WebP (quality < 100) is rejected rather than silently ignored.
@@ -34,7 +39,11 @@ enum Action {
     ResizeMax(u32),
     Compress { quality: u8, format: ImageFormat },
     Rotate(u16),
+    Flip { horizontal: bool },
     Crop { x: u32, y: u32, width: u32, height: u32 },
+    Grayscale,
+    /// Lossless: the file's bytes minus its metadata, never decoded (see `metadata`).
+    StripMetadata,
 }
 
 fn format_for_mime(mime: &str) -> Option<ImageFormat> {
@@ -119,12 +128,19 @@ fn parse_action(id: &str, options: &Options) -> Result<Action> {
             }
             Ok(Action::Rotate(degrees))
         }
+        ["image", "flip", rest @ ..] => match param::<String>(options, "axis", rest.first())?.as_str() {
+            "h" | "horizontal" => Ok(Action::Flip { horizontal: true }),
+            "v" | "vertical" => Ok(Action::Flip { horizontal: false }),
+            other => Err(EngineError::InvalidOption(format!("axis must be h or v, got `{other}`"))),
+        },
         ["image", "crop"] => Ok(Action::Crop {
             x: param(options, "x", None)?,
             y: param(options, "y", None)?,
             width: param(options, "width", None)?,
             height: param(options, "height", None)?,
         }),
+        ["image", "grayscale"] => Ok(Action::Grayscale),
+        ["image", "strip_metadata"] => Ok(Action::StripMetadata),
         _ => Err(EngineError::UnknownOperation(id.to_string())),
     }
 }
@@ -144,6 +160,12 @@ fn flatten_on_white(img: &DynamicImage) -> RgbImage {
 pub(crate) fn encode(img: &DynamicImage, format: ImageFormat, quality: Option<u8>) -> Result<Vec<u8>> {
     let mut buf = Vec::new();
     match format {
+        ImageFormat::Jpeg if !img.color().has_color() => {
+            // Greyscale stays one channel (a third of the size), flattened onto white like RGB.
+            let grey = DynamicImage::ImageRgb8(flatten_on_white(img)).to_luma8();
+            let q = quality.unwrap_or(JPEG_DEFAULT_QUALITY);
+            JpegEncoder::new_with_quality(&mut buf, q).encode(grey.as_raw(), grey.width(), grey.height(), ExtendedColorType::L8)?;
+        }
         ImageFormat::Jpeg => {
             let rgb = flatten_on_white(img);
             let q = quality.unwrap_or(JPEG_DEFAULT_QUALITY);
@@ -216,6 +238,13 @@ fn apply(
             };
             (rotated, src_format, None, "rotated")
         }
+        Action::Flip { horizontal } => {
+            let flipped = if horizontal { img.fliph() } else { img.flipv() };
+            (flipped, src_format, None, "flipped")
+        }
+        // Luma (with alpha if there was any); JPEG output stays single-channel.
+        Action::Grayscale => (img.grayscale(), src_format, None, "grayscale"),
+        Action::StripMetadata => unreachable!("handled in `process` without decoding"),
         Action::Crop { x, y, width, height } => {
             let fits = width > 0
                 && height > 0
@@ -243,9 +272,12 @@ fn process(input: &Path, action: &Action) -> Result<PathBuf> {
         Some(other) => return Err(EngineError::UnsupportedFormat(format!("{other:?}"))),
         None => return Err(EngineError::UnsupportedFormat("unrecognised image data".into())),
     };
-    let img = reader.decode()?;
-    let (out, format, quality, tag) = apply(action, img, src_format)?;
-    let bytes = encode(&out, format, quality)?;
+    let (bytes, format, tag) = if *action == Action::StripMetadata {
+        (crate::metadata::strip(&std::fs::read(input)?, src_format)?, src_format, "no metadata")
+    } else {
+        let (out, format, quality, tag) = apply(action, reader.decode()?, src_format)?;
+        (encode(&out, format, quality)?, format, tag)
+    };
 
     let (mut file, path) = create_unique_sibling(input, tag, Some(extension(format)))?;
     if let Err(e) = file.write_all(&bytes) {
@@ -284,7 +316,12 @@ impl Converter for ImageConverter {
                 Operation::new("image.rotate.90", "90\u{b0} CW", "RotateCw"),
                 Operation::new("image.rotate.270", "90\u{b0} CCW", "RotateCcw"),
                 Operation::new("image.rotate.180", "180\u{b0}", "RotateCw"),
+                Operation::new("image.flip.h", "Flip horizontal", "FlipHorizontal2"),
+                Operation::new("image.flip.v", "Flip vertical", "FlipVertical2"),
             ]),
+            catalog::op("image.crop").with_prompt("crop"),
+            catalog::op("image.grayscale"),
+            catalog::op("image.strip_metadata"),
         ]
     }
 
@@ -292,6 +329,30 @@ impl Converter for ImageConverter {
         let action = parse_action(&op.id, options)?; // validate before touching any file
         inputs.iter().map(|input| process(input, &action)).collect()
     }
+}
+
+/// A downscaled copy of an image for picking a crop rectangle: the encoded preview, its mime,
+/// and the size of the *original* (crop options are in original pixels).
+pub struct Preview {
+    pub bytes: Vec<u8>,
+    pub mime: &'static str,
+    pub width: u32,
+    pub height: u32,
+}
+
+/// Decodes `input` the same way the operations do (EXIF orientation is not applied there
+/// either, so the preview matches what `image.crop` sees) and fits it in `max_side` px.
+pub fn preview(input: &Path, max_side: u32) -> Result<Preview> {
+    if !input.is_file() {
+        return Err(EngineError::InputNotFound(input.to_path_buf()));
+    }
+    let img = ImageReader::open(input)?.with_guessed_format()?.decode()?;
+    let (width, height) = (img.width(), img.height());
+    let small = if width.max(height) > max_side { img.thumbnail(max_side, max_side) } else { img };
+    // JPEG is much smaller to send to the UI; PNG only when there is transparency to show.
+    let transparent = small.color().has_alpha() && small.to_rgba8().pixels().any(|p| p[3] < 255);
+    let (format, mime) = if transparent { (ImageFormat::Png, "image/png") } else { (ImageFormat::Jpeg, "image/jpeg") };
+    Ok(Preview { bytes: encode(&small, format, Some(85))?, mime, width, height })
 }
 
 #[cfg(test)]
@@ -542,7 +603,9 @@ mod tests {
         assert_eq!(ids("image/png"), ["image.convert.jpg", "image.convert.webp"]);
         assert_eq!(ids("image/jpeg"), ["image.convert.png", "image.convert.webp"]);
         assert_eq!(ids("image/webp"), ["image.convert.png", "image.convert.jpg"]);
-        assert_eq!(ImageConverter.operations("image/png").len(), 4);
+        assert_eq!(ImageConverter.operations("image/png").len(), 7);
+        let crop = ImageConverter.operations("image/png").into_iter().find(|o| o.id == "image.crop").unwrap();
+        assert_eq!(crop.prompt.as_deref(), Some("crop"));
         assert!(!ImageConverter.can_handle("application/pdf"));
     }
 
@@ -551,13 +614,76 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let png = write_fixture(d.path(), "pic.png", &two_tone());
         let reg = crate::Registry::with_defaults();
-        // Planned entries (listed unavailable, hidden by the menu) have nothing to run yet.
-        for parent in reg.operations("image/png").into_iter().filter(|o| o.available) {
+        // Planned entries (listed unavailable, hidden by the menu) have nothing to run yet;
+        // prompted ones (crop) need the options the UI asks for.
+        for parent in reg.operations("image/png").into_iter().filter(|o| o.available && o.prompt.is_none()) {
             let leaves = if parent.children.is_empty() { vec![parent.clone()] } else { parent.children.clone() };
             for op in leaves {
                 let out = reg.run("image/png", &op, &[png.clone()], &Options::new());
                 assert!(out.is_ok(), "{} failed: {:?}", op.id, out.err());
             }
         }
+    }
+
+    #[test]
+    fn flips_mirror_the_image() {
+        let d = tempfile::tempdir().unwrap();
+        let png = write_fixture(d.path(), "pic.png", &two_tone());
+        let h = run("image.flip.h", &png, &[]).unwrap().remove(0);
+        assert_eq!(h, d.path().join("pic (flipped).png"));
+        assert_eq!(*open(&h).get_pixel(0, 0), Rgba([0, 0, 255, 255]), "blue moved to the left");
+        let top_red = RgbaImage::from_fn(2, 2, |_, y| if y == 0 { Rgba([255, 0, 0, 255]) } else { Rgba([0, 0, 255, 255]) });
+        let tall = write_fixture(d.path(), "tall.png", &top_red);
+        let v = run("image.flip", &tall, &[("axis", "v")]).unwrap().remove(0);
+        assert_eq!(*open(&v).get_pixel(0, 0), Rgba([0, 0, 255, 255]));
+        assert!(matches!(run("image.flip.diagonal", &png, &[]), Err(EngineError::InvalidOption(_))));
+    }
+
+    #[test]
+    fn grayscale_keeps_format_and_alpha() {
+        let d = tempfile::tempdir().unwrap();
+        let mut img = two_tone();
+        img.put_pixel(0, 0, Rgba([255, 0, 0, 0])); // one transparent pixel
+        let png = write_fixture(d.path(), "pic.png", &img);
+        let out = run("image.grayscale", &png, &[]).unwrap().remove(0);
+        assert_eq!(out, d.path().join("pic (grayscale).png"));
+        let grey = image::open(&out).unwrap();
+        assert_eq!(grey.color(), image::ColorType::La8);
+        let p = grey.to_rgba8();
+        assert_eq!(p.get_pixel(0, 0)[3], 0, "alpha kept");
+        assert!(p.get_pixel(1, 1)[0] == p.get_pixel(1, 1)[1] && p.get_pixel(1, 1)[1] == p.get_pixel(1, 1)[2]);
+
+        let jpg = write_fixture(d.path(), "photo.jpg", &two_tone());
+        let out = run("image.grayscale", &jpg, &[]).unwrap().remove(0);
+        assert_eq!(out, d.path().join("photo (grayscale).jpg"));
+        assert_eq!(image::open(&out).unwrap().color(), image::ColorType::L8, "single-channel JPEG");
+    }
+
+    #[test]
+    fn strip_metadata_writes_a_lossless_copy() {
+        let d = tempfile::tempdir().unwrap();
+        let jpg = write_fixture(d.path(), "photo.jpg", &two_tone());
+        let out = run("image.strip_metadata", &jpg, &[]).unwrap().remove(0);
+        assert_eq!(out, d.path().join("photo (no metadata).jpg"));
+        assert_eq!(open(&out), open(&jpg), "same pixels, not re-encoded");
+        let bad = d.path().join("bad.png");
+        std::fs::write(&bad, b"\x89PNG\r\n\x1a\ntruncated").unwrap();
+        assert!(run("image.strip_metadata", &bad, &[]).is_err());
+        assert!(!d.path().join("bad (no metadata).png").exists());
+    }
+
+    #[test]
+    fn preview_fits_the_box_and_reports_the_original_size() {
+        let d = tempfile::tempdir().unwrap();
+        let big = RgbaImage::from_pixel(300, 120, Rgba([10, 20, 30, 255]));
+        let png = write_fixture(d.path(), "wide.png", &big);
+        let p = preview(&png, 100).unwrap();
+        assert_eq!((p.width, p.height, p.mime), (300, 120, "image/jpeg"));
+        assert_eq!(image::load_from_memory(&p.bytes).unwrap().width(), 100);
+        let mut clear = big.clone();
+        clear.put_pixel(0, 0, Rgba([0, 0, 0, 0]));
+        let p = preview(&write_fixture(d.path(), "clear.png", &clear), 1000).unwrap();
+        assert_eq!((p.mime, image::load_from_memory(&p.bytes).unwrap().width()), ("image/png", 300), "never upscaled");
+        assert!(matches!(preview(&d.path().join("gone.png"), 10), Err(EngineError::InputNotFound(_))));
     }
 }

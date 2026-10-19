@@ -109,10 +109,10 @@ pub const IMAGE_MENU: &[Entry] = &[
     e("image.compress", "Compress", "Minimize2", 10, Optimize),
     e("image.resize", "Resize", "Maximize2", 20, Optimize),
     e("image.convert", "Convert", "FileImage", 30, Convert),
-    // Implemented in the engine (`image.crop` + rect options) but needs a UI to pick the rect.
     e("image.crop", "Crop", "Crop", 40, Edit),
     e("image.remove_bg", "Remove background", "WandSparkles", 50, Edit),
     e("image.rotate", "Rotate / flip", "RotateCw", 60, Edit),
+    e("image.grayscale", "Grayscale", "Contrast", 65, Edit),
     e("image.upscale", "Upscale", "ZoomIn", 70, Optimize),
     e("pdf.from_images", "To PDF", "FileText", 80, Convert).multi(0).batch(),
     e("image.edit", "Edit", "SlidersHorizontal", 90, Edit),
@@ -237,7 +237,7 @@ mod tests {
             // "To PDF" is a batch op: it joins the list in `Registry::operations_for`.
             assert_eq!(
                 more(png),
-                ["Rotate / flip", "Upscale", "Edit", "Object eraser", "Strip metadata", "Watermark", "Duplicate"]
+                ["Rotate / flip", "Grayscale", "Upscale", "Edit", "Object eraser", "Strip metadata", "Watermark", "Duplicate"]
             );
         }
         for word in [DOCX, DOC] {

@@ -41,6 +41,27 @@ pub async fn run_operation(
     .map_err(|e| e.to_string())
 }
 
+/// A downscaled image for the crop dialog; `width`/`height` are the original's (crop options
+/// are in original pixels).
+#[derive(Debug, Serialize)]
+pub struct ImagePreview {
+    /// `data:` URL, so the webview needs no file access.
+    pub src: String,
+    pub width: u32,
+    pub height: u32,
+}
+
+#[tauri::command]
+pub async fn preview_image(path: PathBuf) -> Result<ImagePreview, String> {
+    use base64::Engine as _;
+    let preview = tauri::async_runtime::spawn_blocking(move || engine::images::preview(&path, 1024))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())?;
+    let data = base64::engine::general_purpose::STANDARD.encode(&preview.bytes);
+    Ok(ImagePreview { src: format!("data:{};base64,{data}", preview.mime), width: preview.width, height: preview.height })
+}
+
 #[derive(Debug, Serialize)]
 pub struct FileBatch {
     pub paths: Vec<String>,

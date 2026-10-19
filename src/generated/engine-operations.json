@@ -146,7 +146,27 @@
     ],
     "application/pdf": [
       {
-        "available": false,
+        "available": true,
+        "children": [
+          {
+            "available": true,
+            "icon": "Feather",
+            "id": "pdf.compress.light",
+            "label": "Light"
+          },
+          {
+            "available": true,
+            "icon": "Gauge",
+            "id": "pdf.compress.balanced",
+            "label": "Balanced"
+          },
+          {
+            "available": true,
+            "icon": "Minimize2",
+            "id": "pdf.compress.strong",
+            "label": "Strong"
+          }
+        ],
         "group": "optimize",
         "icon": "Minimize2",
         "id": "pdf.compress",
@@ -294,7 +314,21 @@
         "priority": 80
       },
       {
-        "available": false,
+        "available": true,
+        "children": [
+          {
+            "available": true,
+            "icon": "Text",
+            "id": "pdf.to_text.txt",
+            "label": "Plain text"
+          },
+          {
+            "available": true,
+            "icon": "FileCode",
+            "id": "pdf.to_text.md",
+            "label": "Markdown"
+          }
+        ],
         "group": "extract",
         "icon": "Text",
         "id": "pdf.to_text",
@@ -302,7 +336,27 @@
         "priority": 90
       },
       {
-        "available": false,
+        "available": true,
+        "children": [
+          {
+            "available": true,
+            "icon": "Stamp",
+            "id": "pdf.watermark.confidential",
+            "label": "Confidential"
+          },
+          {
+            "available": true,
+            "icon": "Stamp",
+            "id": "pdf.watermark.draft",
+            "label": "Draft"
+          },
+          {
+            "available": true,
+            "icon": "Stamp",
+            "id": "pdf.watermark.copy",
+            "label": "Copy"
+          }
+        ],
         "group": "edit",
         "icon": "Stamp",
         "id": "pdf.watermark",
@@ -310,7 +364,27 @@
         "priority": 100
       },
       {
-        "available": false,
+        "available": true,
+        "children": [
+          {
+            "available": true,
+            "icon": "ArrowDown",
+            "id": "pdf.page_numbers.bottom_center",
+            "label": "Bottom center"
+          },
+          {
+            "available": true,
+            "icon": "ArrowDownRight",
+            "id": "pdf.page_numbers.bottom_right",
+            "label": "Bottom right"
+          },
+          {
+            "available": true,
+            "icon": "ArrowUpRight",
+            "id": "pdf.page_numbers.top_right",
+            "label": "Top right"
+          }
+        ],
         "group": "edit",
         "icon": "Hash",
         "id": "pdf.page_numbers",
@@ -380,7 +454,7 @@
         "priority": 20
       },
       {
-        "available": false,
+        "available": true,
         "group": "convert",
         "icon": "Braces",
         "id": "sheet.to_json",
@@ -574,7 +648,7 @@
         "priority": 20
       },
       {
-        "available": false,
+        "available": true,
         "group": "convert",
         "icon": "Braces",
         "id": "sheet.to_json",
@@ -776,7 +850,7 @@
         "priority": 20
       },
       {
-        "available": false,
+        "available": true,
         "group": "convert",
         "icon": "Braces",
         "id": "sheet.to_json",
@@ -858,7 +932,7 @@
         "priority": 40
       },
       {
-        "available": false,
+        "available": true,
         "group": "extract",
         "icon": "Images",
         "id": "doc.extract_images",
@@ -984,12 +1058,13 @@
         "priority": 30
       },
       {
-        "available": false,
+        "available": true,
         "group": "edit",
         "icon": "Crop",
         "id": "image.crop",
         "label": "Crop",
-        "priority": 40
+        "priority": 40,
+        "prompt": "crop"
       },
       {
         "available": false,
@@ -1019,6 +1094,18 @@
             "icon": "RotateCw",
             "id": "image.rotate.180",
             "label": "180°"
+          },
+          {
+            "available": true,
+            "icon": "FlipHorizontal2",
+            "id": "image.flip.h",
+            "label": "Flip horizontal"
+          },
+          {
+            "available": true,
+            "icon": "FlipVertical2",
+            "id": "image.flip.v",
+            "label": "Flip vertical"
           }
         ],
         "group": "edit",
@@ -1026,6 +1113,14 @@
         "id": "image.rotate",
         "label": "Rotate / flip",
         "priority": 60
+      },
+      {
+        "available": true,
+        "group": "edit",
+        "icon": "Contrast",
+        "id": "image.grayscale",
+        "label": "Grayscale",
+        "priority": 65
       },
       {
         "available": false,
@@ -1052,7 +1147,7 @@
         "priority": 100
       },
       {
-        "available": false,
+        "available": true,
         "group": "security",
         "icon": "EyeOff",
         "id": "image.strip_metadata",
@@ -1162,12 +1257,13 @@
         "priority": 30
       },
       {
-        "available": false,
+        "available": true,
         "group": "edit",
         "icon": "Crop",
         "id": "image.crop",
         "label": "Crop",
-        "priority": 40
+        "priority": 40,
+        "prompt": "crop"
       },
       {
         "available": false,
@@ -1197,6 +1293,18 @@
             "icon": "RotateCw",
             "id": "image.rotate.180",
             "label": "180°"
+          },
+          {
+            "available": true,
+            "icon": "FlipHorizontal2",
+            "id": "image.flip.h",
+            "label": "Flip horizontal"
+          },
+          {
+            "available": true,
+            "icon": "FlipVertical2",
+            "id": "image.flip.v",
+            "label": "Flip vertical"
           }
         ],
         "group": "edit",
@@ -1204,6 +1312,14 @@
         "id": "image.rotate",
         "label": "Rotate / flip",
         "priority": 60
+      },
+      {
+        "available": true,
+        "group": "edit",
+        "icon": "Contrast",
+        "id": "image.grayscale",
+        "label": "Grayscale",
+        "priority": 65
       },
       {
         "available": false,
@@ -1230,7 +1346,7 @@
         "priority": 100
       },
       {
-        "available": false,
+        "available": true,
         "group": "security",
         "icon": "EyeOff",
         "id": "image.strip_metadata",
@@ -1340,12 +1456,13 @@
         "priority": 30
       },
       {
-        "available": false,
+        "available": true,
         "group": "edit",
         "icon": "Crop",
         "id": "image.crop",
         "label": "Crop",
-        "priority": 40
+        "priority": 40,
+        "prompt": "crop"
       },
       {
         "available": false,
@@ -1375,6 +1492,18 @@
             "icon": "RotateCw",
             "id": "image.rotate.180",
             "label": "180°"
+          },
+          {
+            "available": true,
+            "icon": "FlipHorizontal2",
+            "id": "image.flip.h",
+            "label": "Flip horizontal"
+          },
+          {
+            "available": true,
+            "icon": "FlipVertical2",
+            "id": "image.flip.v",
+            "label": "Flip vertical"
           }
         ],
         "group": "edit",
@@ -1382,6 +1511,14 @@
         "id": "image.rotate",
         "label": "Rotate / flip",
         "priority": 60
+      },
+      {
+        "available": true,
+        "group": "edit",
+        "icon": "Contrast",
+        "id": "image.grayscale",
+        "label": "Grayscale",
+        "priority": 65
       },
       {
         "available": false,
@@ -1408,7 +1545,7 @@
         "priority": 100
       },
       {
-        "available": false,
+        "available": true,
         "group": "security",
         "icon": "EyeOff",
         "id": "image.strip_metadata",
@@ -1462,7 +1599,27 @@
         "priority": 10
       },
       {
-        "available": false,
+        "available": true,
+        "children": [
+          {
+            "available": true,
+            "icon": "Columns3",
+            "id": "sheet.to_json.comma",
+            "label": "Comma"
+          },
+          {
+            "available": true,
+            "icon": "Columns3",
+            "id": "sheet.to_json.semicolon",
+            "label": "Semicolon"
+          },
+          {
+            "available": true,
+            "icon": "ArrowRightToLine",
+            "id": "sheet.to_json.tab",
+            "label": "Tab"
+          }
+        ],
         "group": "convert",
         "icon": "Braces",
         "id": "sheet.to_json",
@@ -1486,7 +1643,7 @@
         "priority": 40
       },
       {
-        "available": false,
+        "available": true,
         "group": "data",
         "icon": "CopyMinus",
         "id": "sheet.dedupe",
@@ -1502,7 +1659,27 @@
         "priority": 60
       },
       {
-        "available": false,
+        "available": true,
+        "children": [
+          {
+            "available": true,
+            "icon": "Rows3",
+            "id": "sheet.split_rows.100",
+            "label": "100 rows"
+          },
+          {
+            "available": true,
+            "icon": "Rows3",
+            "id": "sheet.split_rows.1000",
+            "label": "1,000 rows"
+          },
+          {
+            "available": true,
+            "icon": "Rows3",
+            "id": "sheet.split_rows.10000",
+            "label": "10,000 rows"
+          }
+        ],
         "group": "pages",
         "icon": "Rows3",
         "id": "sheet.split_rows",

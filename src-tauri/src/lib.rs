@@ -24,6 +24,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::list_operations,
             commands::run_operation,
+            commands::preview_image,
             commands::describe_files,
             commands::frontend_ready,
             commands::hide_radial,
