@@ -7,3 +7,4 @@ src-tauri/gen/
 .config/
 .agents/
 src-tauri/binaries/
+src-tauri/resources/pdfium/
