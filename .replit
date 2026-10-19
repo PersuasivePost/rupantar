@@ -1,5 +1,12 @@
+modules = ["nodejs-20", "rust-stable"]
+run = "npm run dev"
+
 [nix]
 channel = "stable-25_05"
 
 [agent]
 expertMode = true
+
+[[ports]]
+localPort = 5000
+externalPort = 80

@@ -1,0 +1,5 @@
+[workspace]
+resolver = "2"
+members = ["crates/engine", "src-tauri"]
+# Bare `cargo test/build` only touches the engine, so Replit never needs webkit2gtk.
+default-members = ["crates/engine"]
