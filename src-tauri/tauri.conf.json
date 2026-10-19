@@ -10,8 +10,39 @@
     "frontendDist": "../dist"
   },
   "app": {
+    "macOSPrivateApi": true,
     "windows": [
-      { "title": "Rupantar", "width": 480, "height": 480, "resizable": false }
+      {
+        "label": "radial",
+        "title": "Rupantar",
+        "url": "index.html",
+        "width": 600,
+        "height": 600,
+        "visible": false,
+        "decorations": false,
+        "transparent": true,
+        "shadow": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "resizable": false,
+        "maximizable": false,
+        "minimizable": false,
+        "closable": false,
+        "visibleOnAllWorkspaces": true,
+        "acceptFirstMouse": true,
+        "focus": false
+      },
+      {
+        "label": "settings",
+        "title": "Rupantar Settings",
+        "url": "index.html#/settings",
+        "width": 460,
+        "height": 380,
+        "visible": false,
+        "center": true,
+        "resizable": false,
+        "maximizable": false
+      }
     ],
     "security": { "csp": null }
   },

@@ -1,7 +1,7 @@
 import {
   Archive, Circle, Code, Copy, EyeOff, Feather, File, FileCode, FileImage, FileSpreadsheet,
   FileText, FileType, Film, Gauge, Globe, Image, Images, Maximize2, Merge, Minimize2, Music,
-  Pencil, Percent, RotateCw, Scissors, Type,
+  Pencil, Percent, RotateCcw, RotateCw, Scissors, Type,
   type LucideIcon,
 } from "lucide-react";
 import { MIME } from "./mockFiles";
@@ -10,7 +10,7 @@ import { MIME } from "./mockFiles";
 const ICONS: Record<string, LucideIcon> = {
   Archive, Code, Copy, EyeOff, Feather, FileCode, FileImage, FileSpreadsheet, FileText, FileType,
   Film, Gauge, Globe, Image, Images, Maximize2, Merge, Minimize2, Music, Pencil, Percent,
-  RotateCw, Scissors, Type,
+  RotateCcw, RotateCw, Scissors, Type,
 };
 
 export const iconFor = (name: string): LucideIcon => ICONS[name] ?? Circle;

@@ -40,12 +40,14 @@ export interface RadialMenuProps {
   onDismiss: () => void;
   /** Called after the success animation finishes. */
   onDone: () => void;
+  /** Dim the page behind the menu. Off in the transparent desktop window. */
+  scrim?: boolean;
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const spring = { type: "spring", stiffness: 420, damping: 28, mass: 0.8 } as const;
 
-export function RadialMenu({ origin, file, operations, onConfirm, onDismiss, onDone }: RadialMenuProps) {
+export function RadialMenu({ origin, file, operations, onConfirm, onDismiss, onDone, scrim = true }: RadialMenuProps) {
   const reduced = !!useReducedMotion();
   const uid = useId().replace(/:/g, "");
   const n = operations.length;
@@ -256,7 +258,7 @@ export function RadialMenu({ origin, file, operations, onConfirm, onDismiss, onD
       onClick={onClick}
       onContextMenu={(e) => { e.preventDefault(); if (phase === "choosing") onDismiss(); }}
     >
-      <motion.div className="absolute inset-0" style={{ background: "var(--scrim)" }} variants={scrimV} />
+      {scrim && <motion.div className="absolute inset-0" style={{ background: "var(--scrim)" }} variants={scrimV} />}
 
       {/* Shared SVG defs (gradients + glow filter), referenced by every segment. */}
       <svg width="0" height="0" className="absolute" aria-hidden>
@@ -340,7 +342,8 @@ export function RadialMenu({ origin, file, operations, onConfirm, onDismiss, onD
           className="absolute flex items-center justify-center rounded-full"
           style={{
             left: C - R_DISC, top: C - R_DISC, width: R_DISC * 2, height: R_DISC * 2,
-            background: "var(--disc-bg)", backdropFilter: "blur(22px) saturate(1.5)",
+            background: "linear-gradient(var(--shell-under, transparent), var(--shell-under, transparent)), var(--disc-bg)",
+            backdropFilter: "blur(22px) saturate(1.5)",
             WebkitBackdropFilter: "blur(22px) saturate(1.5)", willChange: "transform",
           }}
           variants={discV}
@@ -441,7 +444,8 @@ function GlassAnnulus({ variants, rIn, rOut, arc }: {
       className="absolute inset-0"
       variants={variants}
       style={{
-        background: "var(--ring-bg)", backdropFilter: "blur(18px) saturate(1.5)",
+        background: "linear-gradient(var(--shell-under, transparent), var(--shell-under, transparent)), var(--ring-bg)",
+        backdropFilter: "blur(18px) saturate(1.5)",
         WebkitBackdropFilter: "blur(18px) saturate(1.5)", maskImage: mask, WebkitMaskImage: mask,
         willChange: "transform", ...composite,
       }}

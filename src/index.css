@@ -60,6 +60,23 @@
   }
 }
 
+/* Desktop shell: the radial window is transparent, and a webview can't blur the desktop behind
+   it, so the glass layers get an extra tint to stay legible over any wallpaper. */
+:root[data-shell] body {
+  background: transparent;
+}
+:root[data-shell] {
+  --shell-under: rgba(18, 20, 30, 0.5);
+}
+:root[data-shell][data-theme="light"] {
+  --shell-under: rgba(255, 255, 255, 0.45);
+}
+@media (prefers-color-scheme: light) {
+  :root[data-shell]:not([data-theme]) {
+    --shell-under: rgba(255, 255, 255, 0.45);
+  }
+}
+
 html,
 body,
 #root {

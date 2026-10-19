@@ -1,9 +1,10 @@
 //! Placeholder converter that duplicates a file. Exercises the trait and registry
-//! until real converters land.
+//! until more converters land.
 
+use std::fs::File;
 use std::path::PathBuf;
 
-use crate::{unique_sibling_path, Converter, EngineError, Operation, Options, Result};
+use crate::{create_unique_sibling, Converter, EngineError, Operation, Options, Result};
 
 pub struct CopyConverter;
 
@@ -16,16 +17,19 @@ impl Converter for CopyConverter {
         vec![Operation::new("copy", "Duplicate", "Copy")]
     }
 
-    fn run(&self, _op: &Operation, inputs: &[PathBuf], _options: &Options) -> Result<Vec<PathBuf>> {
+    fn run(&self, op: &Operation, inputs: &[PathBuf], _options: &Options) -> Result<Vec<PathBuf>> {
+        if op.id != "copy" {
+            return Err(EngineError::UnknownOperation(op.id.clone()));
+        }
         inputs
             .iter()
             .map(|input| {
                 if !input.is_file() {
                     return Err(EngineError::InputNotFound(input.clone()));
                 }
-                let out = unique_sibling_path(input, "copy", None);
-                std::fs::copy(input, &out)?;
-                Ok(out)
+                let (mut out, path) = create_unique_sibling(input, "copy", None)?;
+                std::io::copy(&mut File::open(input)?, &mut out)?;
+                Ok(path)
             })
             .collect()
     }
@@ -35,25 +39,32 @@ impl Converter for CopyConverter {
 mod tests {
     use super::*;
 
+    fn copy_op() -> Operation {
+        CopyConverter.operations("text/plain").remove(0)
+    }
+
     #[test]
     fn copies_next_to_original() {
-        let d = std::env::temp_dir().join(format!("rupantar-copy-{}", std::process::id()));
-        std::fs::create_dir_all(&d).unwrap();
-        let input = d.join("f.txt");
+        let d = tempfile::tempdir().unwrap();
+        let input = d.path().join("f.txt");
         std::fs::write(&input, b"hello").unwrap();
-        let op = CopyConverter.operations("text/plain").remove(0);
-        let out = CopyConverter.run(&op, &[input.clone()], &Options::new()).unwrap();
-        assert_eq!(out, vec![d.join("f-copy.txt")]);
+        let out = CopyConverter.run(&copy_op(), &[input.clone()], &Options::new()).unwrap();
+        assert_eq!(out, vec![d.path().join("f (copy).txt")]);
         assert_eq!(std::fs::read(&out[0]).unwrap(), b"hello");
         assert!(input.exists());
     }
 
     #[test]
     fn missing_input_errors() {
-        let op = CopyConverter.operations("text/plain").remove(0);
         let err = CopyConverter
-            .run(&op, &[PathBuf::from("/definitely/not/here.txt")], &Options::new())
+            .run(&copy_op(), &[PathBuf::from("/definitely/not/here.txt")], &Options::new())
             .unwrap_err();
         assert!(matches!(err, EngineError::InputNotFound(_)));
+    }
+
+    #[test]
+    fn foreign_op_is_unknown() {
+        let err = CopyConverter.run(&Operation::new("x", "X", "X"), &[], &Options::new()).unwrap_err();
+        assert!(matches!(err, EngineError::UnknownOperation(_)));
     }
 }

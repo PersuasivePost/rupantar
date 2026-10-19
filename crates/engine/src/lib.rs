@@ -1,11 +1,15 @@
 //! Rupantar conversion engine. Pure Rust: no Tauri or UI dependencies.
 
 use std::collections::HashMap;
+use std::fs::{File, OpenOptions};
+use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
 pub mod copy;
+pub mod images;
+pub mod mime;
 
 #[derive(Debug, thiserror::Error)]
 pub enum EngineError {
@@ -13,6 +17,14 @@ pub enum EngineError {
     InputNotFound(PathBuf),
     #[error("no converter handles mime type `{0}`")]
     Unsupported(String),
+    #[error("unsupported format: {0}")]
+    UnsupportedFormat(String),
+    #[error("unknown operation `{0}`")]
+    UnknownOperation(String),
+    #[error("invalid option: {0}")]
+    InvalidOption(String),
+    #[error("image error: {0}")]
+    Image(#[from] image::ImageError),
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
 }
@@ -35,6 +47,11 @@ impl Operation {
     pub fn new(id: &str, label: &str, icon: &str) -> Self {
         Self { id: id.into(), label: label.into(), icon: icon.into(), children: Vec::new() }
     }
+
+    pub fn with_children(mut self, children: Vec<Operation>) -> Self {
+        self.children = children;
+        self
+    }
 }
 
 pub type Options = HashMap<String, String>;
@@ -43,6 +60,8 @@ pub trait Converter: Send + Sync {
     fn can_handle(&self, mime: &str) -> bool;
     fn operations(&self, mime: &str) -> Vec<Operation>;
     /// Returns the paths of the files written, next to their inputs.
+    /// Must return `EngineError::UnknownOperation` for an op id it does not own, so the
+    /// registry can try the next converter.
     fn run(&self, op: &Operation, inputs: &[PathBuf], options: &Options) -> Result<Vec<PathBuf>>;
 }
 
@@ -59,6 +78,7 @@ impl Registry {
     /// Registry with every built-in converter.
     pub fn with_defaults() -> Self {
         let mut r = Self::new();
+        r.register(Box::new(images::ImageConverter));
         r.register(Box::new(copy::CopyConverter));
         r
     }
@@ -75,6 +95,7 @@ impl Registry {
             .collect()
     }
 
+    /// Runs `op` with the first converter for `mime` that owns it.
     pub fn run(
         &self,
         mime: &str,
@@ -82,67 +103,93 @@ impl Registry {
         inputs: &[PathBuf],
         options: &Options,
     ) -> Result<Vec<PathBuf>> {
-        self.converters
-            .iter()
-            .filter(|c| c.can_handle(mime))
-            .find(|c| c.operations(mime).iter().any(|o| o.id == op.id))
-            .ok_or_else(|| EngineError::Unsupported(mime.to_string()))?
-            .run(op, inputs, options)
+        let mut tried = false;
+        for c in self.converters.iter().filter(|c| c.can_handle(mime)) {
+            tried = true;
+            match c.run(op, inputs, options) {
+                Err(EngineError::UnknownOperation(_)) => continue,
+                other => return other,
+            }
+        }
+        Err(if tried {
+            EngineError::UnknownOperation(op.id.clone())
+        } else {
+            EngineError::Unsupported(mime.to_string())
+        })
     }
 }
 
-/// Picks `<stem>-<suffix>.<ext>` next to `input`, adding ` (n)` so an existing file is never overwritten.
-pub fn unique_sibling_path(input: &Path, suffix: &str, ext: Option<&str>) -> PathBuf {
-    let dir = input.parent().unwrap_or_else(|| Path::new("."));
+/// `stem (tag).ext`, then `stem (tag 2).ext`, `stem (tag 3).ext`, ...
+pub fn sibling_name(stem: &str, tag: &str, n: u32, ext: Option<&str>) -> String {
+    let label = if n <= 1 { tag.to_string() } else { format!("{tag} {n}") };
+    match ext {
+        Some(e) => format!("{stem} ({label}).{e}"),
+        None => format!("{stem} ({label})"),
+    }
+}
+
+/// Atomically creates a new file next to `input` named per [`sibling_name`]. Uses `create_new`,
+/// so an existing file is never overwritten, even if another process races us for the name.
+/// `ext` defaults to the input's extension.
+pub fn create_unique_sibling(input: &Path, tag: &str, ext: Option<&str>) -> Result<(File, PathBuf)> {
+    let dir = input.parent().unwrap_or_else(|| Path::new(""));
     let stem = input.file_stem().and_then(|s| s.to_str()).unwrap_or("output");
-    let ext = ext
-        .map(str::to_owned)
-        .or_else(|| input.extension().and_then(|e| e.to_str()).map(str::to_owned));
-    let name = |n: u32| {
-        let counter = if n == 0 { String::new() } else { format!(" ({n})") };
-        match &ext {
-            Some(e) => format!("{stem}-{suffix}{counter}.{e}"),
-            None => format!("{stem}-{suffix}{counter}"),
+    let ext = ext.or_else(|| input.extension().and_then(|e| e.to_str()));
+    for n in 1..10_000 {
+        let path = dir.join(sibling_name(stem, tag, n, ext));
+        match OpenOptions::new().write(true).create_new(true).open(&path) {
+            Ok(file) => return Ok((file, path)),
+            Err(e) if e.kind() == ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(e.into()),
         }
-    };
-    (0..)
-        .map(|n| dir.join(name(n)))
-        .find(|p| !p.exists())
-        .expect("unbounded range always yields a free name")
+    }
+    Err(std::io::Error::new(ErrorKind::AlreadyExists, "no free output name").into())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn tmpdir(name: &str) -> PathBuf {
-        let d = std::env::temp_dir().join(format!("rupantar-{name}-{}", std::process::id()));
-        std::fs::create_dir_all(&d).unwrap();
-        d
+    #[test]
+    fn sibling_names_follow_the_pattern() {
+        assert_eq!(sibling_name("a", "converted", 1, Some("jpg")), "a (converted).jpg");
+        assert_eq!(sibling_name("a", "converted", 2, Some("jpg")), "a (converted 2).jpg");
+        assert_eq!(sibling_name("a", "copy", 1, None), "a (copy)");
     }
 
     #[test]
-    fn unique_path_avoids_existing_files() {
-        let d = tmpdir("unique");
-        let input = d.join("a.txt");
-        let first = unique_sibling_path(&input, "copy", None);
-        assert_eq!(first, d.join("a-copy.txt"));
-        std::fs::write(&first, b"x").unwrap();
-        assert_eq!(unique_sibling_path(&input, "copy", None), d.join("a-copy (1).txt"));
+    fn create_unique_sibling_never_overwrites() {
+        let d = tempfile::tempdir().unwrap();
+        let input = d.path().join("a.txt");
+        let (_, first) = create_unique_sibling(&input, "converted", None).unwrap();
+        assert_eq!(first, d.path().join("a (converted).txt"));
+        std::fs::write(&first, b"keep me").unwrap();
+        let (_, second) = create_unique_sibling(&input, "converted", None).unwrap();
+        assert_eq!(second, d.path().join("a (converted 2).txt"));
+        assert_eq!(std::fs::read(&first).unwrap(), b"keep me");
     }
 
     #[test]
-    fn registry_dispatches_by_mime() {
+    fn registry_lists_ops_by_mime() {
         let r = Registry::with_defaults();
         assert!(!r.operations("text/plain").is_empty());
         assert!(Registry::new().operations("text/plain").is_empty());
+        let ids: Vec<_> = r.operations("image/png").into_iter().map(|o| o.id).collect();
+        assert!(ids.contains(&"image.convert".to_string()));
+        assert!(ids.contains(&"copy".to_string()));
     }
 
     #[test]
     fn run_rejects_unsupported_mime() {
-        let r = Registry::new();
         let op = Operation::new("copy", "Copy", "Copy");
-        let err = r.run("text/plain", &op, &[], &Options::new()).unwrap_err();
+        let err = Registry::new().run("text/plain", &op, &[], &Options::new()).unwrap_err();
         assert!(matches!(err, EngineError::Unsupported(_)));
+    }
+
+    #[test]
+    fn run_rejects_unknown_operation() {
+        let op = Operation::new("nope", "Nope", "Circle");
+        let err = Registry::with_defaults().run("image/png", &op, &[], &Options::new()).unwrap_err();
+        assert!(matches!(err, EngineError::UnknownOperation(id) if id == "nope"));
     }
 }
