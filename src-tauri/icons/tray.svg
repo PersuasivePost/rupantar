@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs><mask id="k" maskUnits="userSpaceOnUse" x="0" y="0" width="1024" height="1024"><rect width="1024" height="1024" fill="#fff"/><circle cx="512" cy="512" r="96" fill="#000"/><circle cx="512" cy="512" r="70" fill="#fff"/></mask></defs>
+  <g fill="#000" mask="url(#k)">
+  <path d="M512.0 486.0 L368.4 237.3 A310 310 0 0 1 655.6 237.3 Z"/>
+  <path d="M595.1 464.0 L738.7 215.3 A310 310 0 0 1 882.3 464.0 Z"/>
+  <path d="M534.5 525.0 L821.7 525.0 A310 310 0 0 1 678.1 773.7 Z"/>
+  <path d="M512.0 538.0 L655.6 786.7 A310 310 0 0 1 368.4 786.7 Z"/>
+  <path d="M489.5 525.0 L345.9 773.7 A310 310 0 0 1 202.3 525.0 Z"/>
+  <path d="M489.5 499.0 L202.3 499.0 A310 310 0 0 1 345.9 250.3 Z"/>
+  </g>
+</svg>
