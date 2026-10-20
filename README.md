@@ -1,5 +1,11 @@
 # Rupantar
 
+[![GitHub stars](https://img.shields.io/github/stars/PersuasivePost/rupantar?style=flat&logo=github)](https://github.com/PersuasivePost/rupantar/stargazers)
+[![Latest release](https://img.shields.io/github/v/release/PersuasivePost/rupantar?include_prereleases)](https://github.com/PersuasivePost/rupantar/releases/latest)
+[![License: MIT](https://img.shields.io/github/license/PersuasivePost/rupantar)](LICENSE)
+
+**Flick a file toward what you want it to become.** Rupantar is a tray-resident, fully offline file converter: a radial menu at your cursor, one gesture, and the result lands next to the original.
+
 *Transformation of form.* A tray-resident file converter. Press a hotkey (default
 `Ctrl/Cmd+Shift+Space`) or drop files on it, and a radial menu opens at your cursor; flick toward an
 operation and the converted file is written next to the original.
@@ -7,7 +13,14 @@ operation and the converted file is written next to the original.
 Everything runs on your machine. There is no telemetry and conversions never touch the network.
 The one exception is the optional packs below, which download only after you agree.
 
+<!-- TODO: replace with a screenshot or GIF of the radial menu (e.g. docs/demo.gif). -->
+## Screenshots
+
+*Screenshot / GIF coming soon.*
+
 ## Install
+
+> If Rupantar saves you a trip to an online converter, consider giving it a ⭐ on [GitHub](https://github.com/PersuasivePost/rupantar).
 
 Download the installer for your system from the
 [Releases](../../releases) page:

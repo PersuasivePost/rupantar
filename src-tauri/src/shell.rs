@@ -142,6 +142,19 @@ pub fn summon(app: &AppHandle, files: Vec<PathBuf>) {
     }
 }
 
+const REPO_URL: &str = "https://github.com/PersuasivePost/rupantar";
+
+/// Opens the project's GitHub page in the browser. `page` is one of a fixed set (never a URL
+/// from the frontend): `repo` or `issues` (a new issue).
+pub fn open_link(app: &AppHandle, page: &str) -> Result<(), String> {
+    let url = match page {
+        "repo" => REPO_URL.to_string(),
+        "issues" => format!("{REPO_URL}/issues/new"),
+        other => return Err(format!("unknown link: {other}")),
+    };
+    tauri_plugin_opener::OpenerExt::opener(app).open_url(url, None::<&str>).map_err(|e| e.to_string())
+}
+
 pub fn hide_radial(app: &AppHandle) {
     if let Some(w) = app.get_webview_window(RADIAL) {
         let _ = w.hide();

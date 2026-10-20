@@ -23,6 +23,7 @@ pub fn run() {
         }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, Some(vec!["--hidden"])))
         .invoke_handler(tauri::generate_handler![
             commands::list_operations,
@@ -37,6 +38,8 @@ pub fn run() {
             commands::get_settings,
             commands::set_shortcut,
             commands::set_autostart,
+            commands::app_info,
+            commands::open_link,
             packs::pack_status,
             packs::install_pack,
             packs::cancel_pack,

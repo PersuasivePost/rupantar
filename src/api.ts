@@ -220,6 +220,25 @@ function mockPreview(path: string): ImagePreview {
 // ---- Desktop shell ------------------------------------------------------------------------
 // Browser mode (no Tauri) gets inert or in-memory stand-ins so the UI stays developable.
 
+export interface AppInfo {
+  name: string;
+  version: string;
+}
+
+/** Name and version of the running app (the browser preview reports a dev placeholder). */
+export async function appInfo(): Promise<AppInfo> {
+  if (isTauri()) return invoke<AppInfo>("app_info");
+  return { name: "Rupantar", version: "dev (browser preview)" };
+}
+
+export type GithubPage = "repo" | "issues";
+
+/** Opens the project's GitHub page (the repo, or a new issue) in the default browser. */
+export async function openGithub(page: GithubPage): Promise<void> {
+  if (isTauri()) return invoke("open_link", { page });
+  window.open(`https://github.com/PersuasivePost/rupantar${page === "issues" ? "/issues/new" : ""}`, "_blank", "noopener");
+}
+
 export const inTauri = (): boolean => isTauri();
 
 export interface FileBatch {

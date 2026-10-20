@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import { ArrowLeft, ChevronRight, FileText, Keyboard, Package, Power, Scale, WandSparkles } from "lucide-react";
-import { getSettings, setAutostart, setShortcut, thirdPartyNotices, type Notice, type PackId, type Settings as SettingsData } from "./api";
+import { ArrowLeft, Bug, ChevronRight, FileText, Info, Keyboard, Package, Power, Scale, Star, WandSparkles } from "lucide-react";
+import { appInfo, getSettings, openGithub, setAutostart, setShortcut, thirdPartyNotices, type Notice, type PackId, type Settings as SettingsData } from "./api";
 import { THIRD_PARTY, type ThirdParty } from "./licenses";
 import { PACK_INFO, formatBytes, progressFraction, progressLabel, usePack } from "./lib/usePack";
 
@@ -53,6 +53,30 @@ function pretty(accelerator: string): string {
 export default function Settings() {
   const [view, setView] = useState<"general" | "licenses">("general");
   return view === "licenses" ? <Licenses onBack={() => setView("general")} /> : <General onLicenses={() => setView("licenses")} />;
+}
+
+function About({ onLicenses }: { onLicenses: () => void }) {
+  const [info, setInfo] = useState<{ name: string; version: string } | null>(null);
+  useEffect(() => { void appInfo().then(setInfo); }, []);
+  return (
+    <section className="rounded-xl border p-4" style={panel}>
+      <div className="mb-3 flex items-center gap-2 text-sm font-medium"><Info size={16} /> About</div>
+      <p className="text-sm">
+        {info?.name ?? "Rupantar"} <span style={{ color: "var(--text-dim)" }}>{info ? `version ${info.version}` : ""}</span>
+      </p>
+      <div className="mt-3 flex flex-wrap gap-2">
+        <button onClick={() => void openGithub("repo")} className={`${button} flex items-center gap-1.5`} style={primary}>
+          <Star size={14} /> Star on GitHub
+        </button>
+        <button onClick={() => void openGithub("issues")} className={`${button} flex items-center gap-1.5`} style={secondary}>
+          <Bug size={14} /> Report an issue
+        </button>
+        <button onClick={onLicenses} className={`${button} flex items-center gap-1.5`} style={secondary}>
+          <Scale size={14} /> Open-source licenses <ChevronRight size={14} />
+        </button>
+      </div>
+    </section>
+  );
 }
 
 function General({ onLicenses }: { onLicenses: () => void }) {
@@ -131,9 +155,7 @@ function General({ onLicenses }: { onLicenses: () => void }) {
       <PackSection pack="office" />
       <PackSection pack="ai" />
 
-      <button onClick={onLicenses} className="flex items-center gap-2 rounded-xl border p-4 text-left text-sm font-medium" style={panel}>
-        <Scale size={16} /> <span className="flex-1">Open-source licenses</span> <ChevronRight size={16} />
-      </button>
+      <About onLicenses={onLicenses} />
     </main>
   );
 }

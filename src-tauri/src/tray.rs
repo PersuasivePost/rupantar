@@ -7,8 +7,9 @@ use crate::shell;
 pub fn build(app: &AppHandle) -> tauri::Result<()> {
     let open = MenuItem::with_id(app, "open", "Open", true, None::<&str>)?;
     let settings = MenuItem::with_id(app, "settings", "Settings\u{2026}", true, None::<&str>)?;
+    let star = MenuItem::with_id(app, "star", "\u{2B50} Star on GitHub", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&open, &settings, &PredefinedMenuItem::separator(app)?, &quit])?;
+    let menu = Menu::with_items(app, &[&open, &settings, &star, &PredefinedMenuItem::separator(app)?, &quit])?;
 
     let mut tray = TrayIconBuilder::with_id("rupantar")
         .tooltip("Rupantar")
@@ -19,6 +20,11 @@ pub fn build(app: &AppHandle) -> tauri::Result<()> {
         .on_menu_event(|app, event| match event.id.as_ref() {
             "open" => shell::summon(app, Vec::new()),
             "settings" => shell::open_settings(app),
+            "star" => {
+                if let Err(e) = shell::open_link(app, "repo") {
+                    eprintln!("rupantar: could not open GitHub: {e}");
+                }
+            }
             "quit" => app.exit(0),
             _ => {}
         })

@@ -282,3 +282,22 @@ pub fn set_autostart(app: AppHandle, enabled: bool) -> Result<Settings, String> 
     settings::save(&app, &current)?;
     Ok(current)
 }
+
+#[derive(Debug, Serialize)]
+pub struct AppInfo {
+    pub name: String,
+    pub version: String,
+}
+
+/// Name and version of the running app (from its package info, for Settings → About).
+#[tauri::command]
+pub fn app_info(app: AppHandle) -> AppInfo {
+    let info = app.package_info();
+    AppInfo { name: info.name.clone(), version: info.version.to_string() }
+}
+
+/// Opens one of the project's GitHub pages (`repo`, `issues`) in the default browser.
+#[tauri::command]
+pub fn open_link(app: AppHandle, page: String) -> Result<(), String> {
+    shell::open_link(&app, &page)
+}
