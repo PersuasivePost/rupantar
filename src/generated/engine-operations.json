@@ -143,6 +143,7 @@
         "icon": "Copy",
         "id": "copy",
         "label": "Duplicate",
+        "more": true,
         "priority": 900
       }
     ],
@@ -152,7 +153,8 @@
         "group": "file",
         "icon": "Copy",
         "id": "copy",
-        "label": "Duplicate"
+        "label": "Duplicate",
+        "more": true
       }
     ],
     "application/pdf": [
@@ -424,6 +426,7 @@
         "icon": "Copy",
         "id": "copy",
         "label": "Duplicate",
+        "more": true,
         "priority": 900
       }
     ],
@@ -521,6 +524,7 @@
         "icon": "Copy",
         "id": "copy",
         "label": "Duplicate",
+        "more": true,
         "priority": 900
       }
     ],
@@ -591,6 +595,7 @@
         "icon": "Copy",
         "id": "copy",
         "label": "Duplicate",
+        "more": true,
         "priority": 900
       }
     ],
@@ -652,6 +657,7 @@
         "icon": "Copy",
         "id": "copy",
         "label": "Duplicate",
+        "more": true,
         "priority": 900
       }
     ],
@@ -740,6 +746,7 @@
         "icon": "Copy",
         "id": "copy",
         "label": "Duplicate",
+        "more": true,
         "priority": 900
       }
     ],
@@ -816,6 +823,7 @@
         "icon": "Copy",
         "id": "copy",
         "label": "Duplicate",
+        "more": true,
         "priority": 900
       }
     ],
@@ -877,6 +885,7 @@
         "icon": "Copy",
         "id": "copy",
         "label": "Duplicate",
+        "more": true,
         "priority": 900
       }
     ],
@@ -965,6 +974,7 @@
         "icon": "Copy",
         "id": "copy",
         "label": "Duplicate",
+        "more": true,
         "priority": 900
       }
     ],
@@ -986,7 +996,7 @@
         "priority": 20
       },
       {
-        "available": false,
+        "available": true,
         "group": "convert",
         "icon": "Globe",
         "id": "doc.to_html",
@@ -994,7 +1004,27 @@
         "priority": 30
       },
       {
-        "available": false,
+        "available": true,
+        "children": [
+          {
+            "available": true,
+            "icon": "Feather",
+            "id": "doc.compress.light",
+            "label": "Light"
+          },
+          {
+            "available": true,
+            "icon": "Gauge",
+            "id": "doc.compress.balanced",
+            "label": "Balanced"
+          },
+          {
+            "available": true,
+            "icon": "Minimize2",
+            "id": "doc.compress.strong",
+            "label": "Strong"
+          }
+        ],
         "group": "optimize",
         "icon": "Minimize2",
         "id": "doc.compress",
@@ -1026,7 +1056,7 @@
         "priority": 70
       },
       {
-        "available": false,
+        "available": true,
         "group": "extract",
         "icon": "Text",
         "id": "doc.to_text",
@@ -1039,6 +1069,7 @@
         "icon": "Copy",
         "id": "copy",
         "label": "Duplicate",
+        "more": true,
         "priority": 900
       }
     ],
@@ -1230,6 +1261,7 @@
         "icon": "Copy",
         "id": "copy",
         "label": "Duplicate",
+        "more": true,
         "priority": 900
       }
     ],
@@ -1421,6 +1453,7 @@
         "icon": "Copy",
         "id": "copy",
         "label": "Duplicate",
+        "more": true,
         "priority": 900
       }
     ],
@@ -1612,6 +1645,7 @@
         "icon": "Copy",
         "id": "copy",
         "label": "Duplicate",
+        "more": true,
         "priority": 900
       }
     ],
@@ -1772,6 +1806,7 @@
         "icon": "Copy",
         "id": "copy",
         "label": "Duplicate",
+        "more": true,
         "priority": 900
       }
     ],
@@ -1825,7 +1860,7 @@
         "priority": 60
       },
       {
-        "available": false,
+        "available": true,
         "group": "extract",
         "icon": "Text",
         "id": "doc.to_text",
@@ -1838,6 +1873,7 @@
         "icon": "Copy",
         "id": "copy",
         "label": "Duplicate",
+        "more": true,
         "priority": 900
       }
     ],
@@ -1891,7 +1927,7 @@
         "priority": 60
       },
       {
-        "available": false,
+        "available": true,
         "group": "extract",
         "icon": "Text",
         "id": "doc.to_text",
@@ -1904,6 +1940,7 @@
         "icon": "Copy",
         "id": "copy",
         "label": "Duplicate",
+        "more": true,
         "priority": 900
       }
     ]

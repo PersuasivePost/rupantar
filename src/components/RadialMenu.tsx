@@ -55,7 +55,8 @@ export interface RadialMenuProps {
   file: { name: string; mime: string };
   /**
    * Operations for this selection, in menu order. Unavailable ones (missing tools, planned) are
-   * not rendered; past six, the first five are wedges and the rest go in a "More" ring.
+   * not rendered; past six, the first five are wedges and the rest go in a "More" ring, as do
+   * those marked `more` (see `menuWedges`).
    */
   operations: Operation[];
   /** Runs the chosen operation; `parent` is set when it came from the sub ring. */
@@ -434,6 +435,7 @@ export function RadialMenu({ origin, file, operations: all, onConfirm, onPrompt,
             rMid={(R_IN + R_OUT) / 2 + 2}
             maxWidth={Math.min(112, labelWidth((R_IN + R_OUT) / 2, step, 0.78))}
             label={op.label}
+            note={packNote(op)}
             Icon={iconFor(op.icon)}
             highlighted={hi === i && phase === "choosing"}
             hasChildren={!!op.children?.length}

@@ -24,9 +24,11 @@ export interface Operation {
   prompt?: string;
   /**
    * An optional download this needs (`office`: LibreOffice). With `available: false` the menu
-   * still shows it, under More, and choosing it offers the download.
+   * still shows it, and choosing it offers the download.
    */
   pack?: string;
+  /** Always under "More", never a top wedge (Duplicate; Office-pack ops while the pack is missing). */
+  more?: boolean;
 }
 
 export type Options = Record<string, string>;
@@ -132,7 +134,7 @@ function mockOperations(mime: string): Operation[] {
 function withAvailability(ops: Operation[]): Operation[] {
   const needs = (id: string, pack?: string): boolean => {
     if (pack === "office") return !mockTools.office || (id === "slides.to_images" && !mockTools.pdfium);
-    return ((id.startsWith("doc.") && id !== "doc.extract_images") && !mockTools.pandoc) ||
+    return (id.startsWith("doc.") && !/^doc\.(extract_images|compress)/.test(id) && !mockTools.pandoc) ||
       (/^pdf\.to_(pptx|docx)$/.test(id) && !mockTools.pandoc) ||
       (id === "doc.to_pdf" && !mockTools.typst) ||
       (/^pdf\.to_(image|png|jpg|text|pptx|docx)/.test(id) && !mockTools.pdfium);

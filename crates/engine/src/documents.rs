@@ -2,14 +2,16 @@
 //! (`--pdf-engine=typst`, no LaTeX).
 //!
 //! Operation ids are `doc.to_<format>`: `doc.to_md`, `doc.to_docx`, `doc.to_html`, `doc.to_odt`,
-//! `doc.to_epub`, `doc.to_pdf`, `doc.to_slides` (PowerPoint). Offered: DOCX -> MD / ODT / EPUB /
-//! PDF, MD -> DOCX / HTML / EPUB / PDF / slides, HTML -> MD / DOCX / PDF. Every operation is listed but marked unavailable when
-//! pandoc is missing; PDF also needs typst.
+//! `doc.to_epub`, `doc.to_pdf`, `doc.to_slides` (PowerPoint), `doc.to_text` (plain text, `.txt`).
+//! Offered: DOCX -> MD / HTML / ODT / EPUB / PDF / text, MD -> DOCX / HTML / EPUB / PDF /
+//! slides / text, HTML -> MD / DOCX / PDF / text. Every operation is listed but marked
+//! unavailable when pandoc is missing; PDF also needs typst.
 //!
 //! DOCX -> MD extracts embedded images into a `name_media` folder next to the output (pandoc
 //! nests them as `name_media/media/…`) and the Markdown links to them relatively; the folder is
 //! removed again when the document has no images. Markdown output is GitHub-flavoured, unwrapped.
-//! HTML output is a standalone page.
+//! HTML output is a standalone page; from DOCX its images are embedded as `data:` URIs, so the
+//! page is one self-contained file. Text output is unwrapped (one line per paragraph).
 //!
 //! No network: remote images (`https://…`) become plain links via a Lua filter before any
 //! writer would fetch them, and `tools::run` gives pandoc and typst a dead proxy as a backstop
@@ -33,6 +35,7 @@ enum Format {
     Epub,
     Pdf,
     Pptx,
+    Text,
 }
 
 use Format::*;
@@ -49,10 +52,10 @@ impl Format {
 
     fn targets(self) -> &'static [Format] {
         match self {
-            Docx => &[Markdown, Odt, Epub, Pdf],
-            Markdown => &[Docx, Html, Epub, Pdf, Pptx],
-            Html => &[Markdown, Docx, Pdf],
-            Odt | Epub | Pdf | Pptx => &[],
+            Docx => &[Markdown, Html, Odt, Epub, Pdf, Text],
+            Markdown => &[Docx, Html, Epub, Pdf, Pptx, Text],
+            Html => &[Markdown, Docx, Pdf, Text],
+            Odt | Epub | Pdf | Pptx | Text => &[],
         }
     }
 
@@ -66,11 +69,12 @@ impl Format {
             Epub => ("doc.to_epub", "EPUB", "epub"),
             Pdf => ("doc.to_pdf", "PDF", "pdf"),
             Pptx => ("doc.to_slides", "PowerPoint", "pptx"),
+            Text => ("doc.to_text", "text", "txt"),
         }
     }
 
     fn from_id(id: &str) -> Option<Format> {
-        [Markdown, Docx, Html, Odt, Epub, Pdf, Pptx].into_iter().find(|f| f.meta().0 == id)
+        [Markdown, Docx, Html, Odt, Epub, Pdf, Pptx, Text].into_iter().find(|f| f.meta().0 == id)
     }
 
     /// pandoc's reader / writer name. PDF is written as typst source and compiled (`to_pdf`).
@@ -83,6 +87,7 @@ impl Format {
             Epub => "epub",
             Pdf => "typst",
             Pptx => "pptx",
+            Text => "plain",
         }
     }
 }
@@ -146,6 +151,7 @@ impl DocumentConverter {
         let mut args = work.pandoc_args(from)?;
         match to {
             Markdown => args.extend(["--to".into(), "gfm".into(), "--wrap=none".into()]),
+            Text => args.extend(["--to".into(), "plain".into(), "--wrap=none".into()]),
             Html => args.extend([
                 "--to".into(),
                 "html5".into(),
@@ -154,6 +160,11 @@ impl DocumentConverter {
                 format!("pagetitle={stem}").into(),
             ]),
             _ => args.extend(["--to".into(), to.pandoc_name().into()]),
+        }
+        if from == Docx && to == Html {
+            // A DOCX's images only exist inside it, so they go into the page as data: URIs
+            // (remote ones are links by now, so nothing is fetched).
+            args.push("--embed-resources".into());
         }
         let media = if from == Docx && to == Markdown {
             Some(create_unique_dir(dir, |n| match n {
@@ -244,6 +255,10 @@ impl Drop for WorkDir {
 }
 
 impl Converter for DocumentConverter {
+    fn name(&self) -> &'static str {
+        "pandoc"
+    }
+
     fn can_handle(&self, mime: &str) -> bool {
         Format::of_mime(mime).is_some()
     }
@@ -355,9 +370,12 @@ mod tests {
     fn operations_per_input_type() {
         let c = converter(None, None);
         let ids = |m: &str| c.operations(m).into_iter().map(|o| o.id).collect::<Vec<_>>();
-        assert_eq!(ids(DOCX), ["doc.to_md", "doc.to_odt", "doc.to_epub", "doc.to_pdf"]);
-        assert_eq!(ids(MARKDOWN), ["doc.to_docx", "doc.to_html", "doc.to_epub", "doc.to_pdf", "doc.to_slides"]);
-        assert_eq!(ids(HTML), ["doc.to_md", "doc.to_docx", "doc.to_pdf"]);
+        assert_eq!(ids(DOCX), ["doc.to_md", "doc.to_html", "doc.to_odt", "doc.to_epub", "doc.to_pdf", "doc.to_text"]);
+        assert_eq!(
+            ids(MARKDOWN),
+            ["doc.to_docx", "doc.to_html", "doc.to_epub", "doc.to_pdf", "doc.to_slides", "doc.to_text"]
+        );
+        assert_eq!(ids(HTML), ["doc.to_md", "doc.to_docx", "doc.to_pdf", "doc.to_text"]);
         assert!(ids("image/png").is_empty());
         assert!(!c.can_handle("application/pdf"));
     }
@@ -378,6 +396,7 @@ mod tests {
                 ("doc.to_epub".into(), true),
                 ("doc.to_pdf".into(), false),
                 ("doc.to_slides".into(), true),
+                ("doc.to_text".into(), true),
             ]
         );
         assert!(avail(&converter(Some(exe.clone()), Some(exe))).iter().all(|(_, a)| *a));
@@ -502,6 +521,37 @@ mod tests {
         let html = std::fs::read_to_string(&out[0]).unwrap();
         assert!(html.contains("<html") && html.contains("<title>page</title>"), "{html}");
         assert!(html.contains("<table"));
+    }
+
+    #[test]
+    fn docx_to_html_embeds_its_images() {
+        let Some(c) = real() else { return };
+        let d = tempfile::tempdir().unwrap();
+        let input = docx(&c, d.path());
+        std::fs::remove_file(d.path().join("dot.png")).unwrap(); // only the copy inside the DOCX is left
+        let out = run(&c, "doc.to_html", &[input]).unwrap();
+        assert_eq!(out, vec![d.path().join("report (converted).html")]);
+        let html = std::fs::read_to_string(&out[0]).unwrap();
+        assert!(html.contains("<title>report</title>") && html.contains("Quarterly notes"), "{html}");
+        assert!(html.contains("src=\"data:image/png;base64,"), "the image is inside the page");
+        assert!(html.contains("https://example.com/x.png"), "the remote image stays a link");
+        assert_eq!(std::fs::read_dir(d.path()).unwrap().count(), 3, "no media folder: {:?}", walk(d.path()));
+    }
+
+    #[test]
+    fn docx_markdown_and_html_to_text() {
+        let Some(c) = real() else { return };
+        let d = tempfile::tempdir().unwrap();
+        let input = docx(&c, d.path());
+        let html = d.path().join("page.html");
+        std::fs::write(&html, "<h1>Title</h1><p>One <b>bold</b> line that is long enough to have been wrapped by pandoc at seventy-two columns.</p>").unwrap();
+        let out = run(&c, "doc.to_text", &[input, d.path().join("report.md"), html]).unwrap();
+        assert_eq!(out[0], d.path().join("report (converted).txt"));
+        let text = std::fs::read_to_string(&out[0]).unwrap();
+        assert!(text.contains("Quarterly notes") && text.contains("emphasis"), "{text}");
+        assert!(!text.contains("**") && !text.contains("<"), "plain, no markup: {text}");
+        let page = std::fs::read_to_string(&out[2]).unwrap();
+        assert!(page.contains("One bold line that is long enough to have been wrapped by pandoc at seventy-two columns."), "unwrapped: {page}");
     }
 
     #[test]

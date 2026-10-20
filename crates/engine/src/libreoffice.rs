@@ -9,8 +9,8 @@
 //!
 //! A conversion to the file's own type is never offered. Outputs are `name (converted).ext`.
 //!
-//! Without the pack these are listed with `pack: "office"` and `available: false` (the menu
-//! offers to download it), and running one is `PackMissing`. Exception: DOCX -> PDF / ODT
+//! Without the pack these are listed with `pack: "office"`, `available: false` and `more` (the
+//! menu offers the download, under More), and running one is `PackMissing`. Exception: DOCX -> PDF / ODT
 //! also exist through pandoc, so for DOCX this converter offers them only once LibreOffice is
 //! installed (it then takes over: better layout fidelity) and otherwise leaves them to
 //! `documents`.
@@ -175,6 +175,16 @@ impl LibreOfficeConverter {
     }
 }
 
+/// Until the pack is installed its operations go under More, so they never take a top wedge
+/// from something that works now.
+fn waiting(op: Operation, installed: bool) -> Operation {
+    if installed {
+        op
+    } else {
+        op.in_more()
+    }
+}
+
 /// A `file://` URL for a local path (LibreOffice's `-env:UserInstallation` wants one).
 fn file_url(path: &Path) -> String {
     let s = path.to_string_lossy().replace('\\', "/");
@@ -190,6 +200,10 @@ fn file_url(path: &Path) -> String {
 }
 
 impl Converter for LibreOfficeConverter {
+    fn name(&self) -> &'static str {
+        "LibreOffice"
+    }
+
     fn can_handle(&self, mime: &str) -> bool {
         family(mime).is_some()
     }
@@ -206,7 +220,7 @@ impl Converter for LibreOfficeConverter {
                 if has_fallback(mime, t.id) {
                     op
                 } else {
-                    op.needs_pack(PACK)
+                    waiting(op.needs_pack(PACK), installed)
                 }
             })
             .collect();
@@ -214,7 +228,7 @@ impl Converter for LibreOfficeConverter {
             let op = catalog::op(TO_IMAGES);
             ops.push(match (installed, self.pdfium.is_some()) {
                 (_, false) => op.available(false), // no renderer: the pack wouldn't help
-                (installed, true) => op.available(installed).needs_pack(PACK),
+                (installed, true) => waiting(op.available(installed).needs_pack(PACK), installed),
             });
         }
         ops
@@ -396,7 +410,53 @@ mod tests {
         assert_eq!(file_url(Path::new(r"C:\Users\x")), "file:///C:/Users/x");
     }
 
+    /// DOCX -> PDF / ODT exist twice; with the pack installed the registry must pick LibreOffice.
+    /// A stand-in `soffice` that always fails shows who ran, without needing LibreOffice.
+    #[cfg(unix)]
+    #[test]
+    fn the_registry_sends_docx_to_libreoffice_once_installed() {
+        use std::os::unix::fs::PermissionsExt;
+        let d = tempfile::tempdir().unwrap();
+        let fake = d.path().join("soffice.bin");
+        std::fs::write(&fake, "#!/bin/sh\necho 'stand-in soffice' >&2\nexit 3\n").unwrap();
+        std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let docx = d.path().join("a.docx");
+        std::fs::write(&docx, b"x").unwrap();
+        let registry = crate::Registry::with_config(&EngineConfig { soffice_path: Some(fake), ..EngineConfig::default() });
+        for id in ["doc.to_pdf", "doc.to_odt"] {
+            let err = registry.run_traced(&[DOCX.to_string()], &Operation::new(id, "", ""), std::slice::from_ref(&docx), &Options::new()).unwrap_err();
+            assert!(matches!(&err, EngineError::ToolFailed { tool, .. } if tool == TOOL), "{id}: {err}");
+        }
+    }
+
     // ---- with LibreOffice (skipped when it isn't installed) -------------------------------
+
+    #[test]
+    fn docx_to_pdf_and_odt_report_libreoffice_as_the_engine() {
+        let Some(soffice) = for_tests() else { return };
+        let d = tempfile::tempdir().unwrap();
+        let input = d.path().join("letter.odt");
+        odt(&input, "Dear reader");
+        let docx = run(&converter(Some(soffice.clone())), "doc.to_docx", &[input]).unwrap().remove(0);
+        let config = EngineConfig {
+            soffice_path: Some(soffice),
+            pandoc_path: tools::for_tests("pandoc"),
+            typst_path: tools::for_tests("typst"),
+            tool_timeout: Duration::from_secs(180),
+            ..EngineConfig::default()
+        };
+        let mimes = [DOCX.to_string()];
+        let with_pack = crate::Registry::with_config(&config);
+        for id in ["doc.to_pdf", "doc.to_odt"] {
+            let run = with_pack.run_traced(&mimes, &Operation::new(id, "", ""), std::slice::from_ref(&docx), &Options::new()).unwrap();
+            assert_eq!(run.engine, "LibreOffice", "{id}");
+        }
+        if config.pandoc_path.is_some() && config.typst_path.is_some() {
+            let without = crate::Registry::with_config(&EngineConfig { soffice_path: None, ..config });
+            let run = without.run_traced(&mimes, &Operation::new("doc.to_pdf", "", ""), &[docx], &Options::new()).unwrap();
+            assert_eq!(run.engine, "pandoc");
+        }
+    }
 
     #[test]
     fn text_documents_convert() {

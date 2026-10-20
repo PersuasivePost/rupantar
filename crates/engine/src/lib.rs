@@ -89,10 +89,18 @@ pub struct Operation {
     /// menu still shows it (under More, as "needs Office pack") and offers the download.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pack: Option<String>,
+    /// Always listed under "More", never as one of the top wedges (Duplicate; Office-pack
+    /// operations while the pack is missing).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub more: bool,
 }
 
 fn yes() -> bool {
     true
+}
+
+fn is_false(b: &bool) -> bool {
+    !*b
 }
 
 impl Operation {
@@ -107,6 +115,7 @@ impl Operation {
             group: None,
             prompt: None,
             pack: None,
+            more: false,
         }
     }
 
@@ -127,6 +136,11 @@ impl Operation {
 
     pub fn needs_pack(mut self, pack: &str) -> Self {
         self.pack = Some(pack.into());
+        self
+    }
+
+    pub fn in_more(mut self) -> Self {
+        self.more = true;
         self
     }
 }
@@ -175,6 +189,10 @@ impl EngineConfig {
 }
 
 pub trait Converter: Send + Sync {
+    /// Which engine does the work ("LibreOffice", "pandoc", ...), for the shell's log.
+    fn name(&self) -> &'static str {
+        "built-in"
+    }
     fn can_handle(&self, mime: &str) -> bool;
     fn operations(&self, mime: &str) -> Vec<Operation>;
     /// Operations that only make sense for a whole selection, e.g. merging several PDFs.
@@ -190,13 +208,22 @@ pub trait Converter: Send + Sync {
     fn run(&self, op: &Operation, inputs: &[PathBuf], options: &Options) -> Result<Vec<PathBuf>>;
 }
 
+/// The result of [`Registry::run_traced`]: the files written and the converter that wrote them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Run {
+    pub outputs: Vec<PathBuf>,
+    /// `Converter::name` of the converter that ran the operation.
+    pub engine: &'static str,
+}
+
 #[derive(Default)]
 pub struct Registry {
     converters: Vec<Box<dyn Converter>>,
 }
 
 /// The operations of `a` that `b` also offers (by id, recursively); a parent whose children
-/// all drop out goes too. Available only if available in both; a pack either needs is kept.
+/// all drop out goes too. Available only if available in both; a pack either needs is kept,
+/// and so is `more`.
 fn intersect(a: Vec<Operation>, b: &[Operation]) -> Vec<Operation> {
     a.into_iter()
         .filter_map(|op| {
@@ -208,7 +235,8 @@ fn intersect(a: Vec<Operation>, b: &[Operation]) -> Vec<Operation> {
                 return None;
             }
             let pack = op.pack.clone().or_else(|| other.pack.clone());
-            Some(Operation { children, available, pack, ..op })
+            let more = op.more || other.more;
+            Some(Operation { children, available, pack, more, ..op })
         })
         .collect()
 }
@@ -318,12 +346,18 @@ impl Registry {
         inputs: &[PathBuf],
         options: &Options,
     ) -> Result<Vec<PathBuf>> {
+        self.run_traced(mimes, op, inputs, options).map(|r| r.outputs)
+    }
+
+    /// [`Registry::run_for`], also reporting which converter ran (e.g. DOCX -> PDF:
+    /// "LibreOffice" when the Office pack is installed, else "pandoc").
+    pub fn run_traced(&self, mimes: &[String], op: &Operation, inputs: &[PathBuf], options: &Options) -> Result<Run> {
         let mut tried = false;
         for c in self.converters.iter().filter(|c| mimes.iter().all(|m| c.can_handle(m))) {
             tried = true;
             match c.run(op, inputs, options) {
                 Err(EngineError::UnknownOperation(_)) => continue,
-                other => return other,
+                other => return other.map(|outputs| Run { outputs, engine: c.name() }),
             }
         }
         Err(if tried {
@@ -506,13 +540,21 @@ mod tests {
         );
         assert_eq!(
             visible(&r.operations(mime::DOCX)),
-            ["doc.to_pdf", "doc.to_md", "doc.extract_images", "doc.to_odt", "doc.to_epub", "copy"]
+            [
+                "doc.to_pdf", "doc.to_md", "doc.to_html", "doc.compress", "doc.extract_images", "doc.to_odt", "doc.to_epub",
+                "doc.to_text", "copy",
+            ]
         );
         assert_eq!(
             visible(&r.operations(mime::MARKDOWN)),
-            ["doc.to_pdf", "doc.to_docx", "doc.to_html", "doc.to_slides", "doc.to_epub", "copy"]
+            ["doc.to_pdf", "doc.to_docx", "doc.to_html", "doc.to_slides", "doc.to_epub", "doc.to_text", "copy"]
         );
-        assert_eq!(visible(&r.operations(mime::HTML)), ["doc.to_pdf", "doc.to_docx", "doc.to_md", "copy"]);
+        assert_eq!(visible(&r.operations(mime::HTML)), ["doc.to_pdf", "doc.to_docx", "doc.to_md", "doc.to_text", "copy"]);
+        // Duplicate is last and always under More.
+        for m in [mime::PDF, mime::DOCX, mime::CSV, "image/png", mime::UNKNOWN] {
+            let ops = r.operations(m);
+            assert!(ops.iter().filter(|o| o.more).map(|o| o.id.as_str()).eq(["copy"]), "{m}");
+        }
         // LibreOffice ("present" here) handles the rest of the Office formats.
         assert_eq!(visible(&r.operations(mime::PPTX)), ["slides.to_pdf", "slides.to_images", "slides.to_odp", "copy"]);
         assert_eq!(visible(&r.operations(mime::PPT)), ["slides.to_pdf", "slides.to_pptx", "slides.to_images", "slides.to_odp", "copy"]);
@@ -576,11 +618,17 @@ mod tests {
         assert_eq!(visible(&r.operations_for(&mimes(&["image/png", mime::CSV]))), ["copy"]);
         assert!(r.operations_for(&[]).is_empty());
 
-        // Availability is the AND across types: DOCX -> HTML is only planned.
+        // Availability is the AND across types: To image is only planned for Markdown, and a
+        // DOCX + PDF selection has nothing in common but Duplicate (which stays under More).
         let r = all_tools();
         let docs = r.operations_for(&mimes(&[mime::DOCX, mime::MARKDOWN]));
         assert_eq!(ids(&docs), ["doc.to_pdf", "doc.to_html", "doc.to_epub", "doc.to_text", "copy"]);
-        assert_eq!(docs.iter().map(|o| o.available).collect::<Vec<_>>(), [true, false, true, false, true]);
+        assert!(docs.iter().all(|o| o.available));
+        let md = r.operations_for(&mimes(&[mime::MARKDOWN, mime::HTML]));
+        let image = md.iter().find(|o| o.id == "doc.to_image").unwrap();
+        assert!(!image.available, "planned for both");
+        let copy = r.operations_for(&mimes(&[mime::DOCX, mime::PDF]));
+        assert_eq!((ids(&copy), copy[0].more), (vec!["copy"], true));
     }
 
     #[test]

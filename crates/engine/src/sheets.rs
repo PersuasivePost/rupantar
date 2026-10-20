@@ -788,6 +788,10 @@ fn workbook_to_html(input: &Path) -> Result<PathBuf> {
 }
 
 impl Converter for SheetConverter {
+    fn name(&self) -> &'static str {
+        "spreadsheet"
+    }
+
     fn can_handle(&self, mime: &str) -> bool {
         is_workbook(mime) || mime == CSV
     }

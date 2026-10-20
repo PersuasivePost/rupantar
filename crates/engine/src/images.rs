@@ -288,6 +288,10 @@ fn process(input: &Path, action: &Action) -> Result<PathBuf> {
 }
 
 impl Converter for ImageConverter {
+    fn name(&self) -> &'static str {
+        "image"
+    }
+
     fn can_handle(&self, mime: &str) -> bool {
         format_for_mime(mime).is_some()
     }

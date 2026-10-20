@@ -26,7 +26,8 @@ export function intersectOperations(a: Operation[], b: Operation[]): Operation[]
     if (!other) return [];
     const available = op.available !== false && other.available !== false;
     const pack = op.pack ?? other.pack;
-    const merged = { ...op, available, ...(pack && { pack }) };
+    const more = !!op.more || !!other.more;
+    const merged = { ...op, available, ...(pack && { pack }), ...(more && { more }) };
     if (!op.children?.length) return [merged];
     const children = intersectOperations(op.children, other.children ?? []);
     return children.length ? [{ ...merged, children }] : [];
@@ -73,12 +74,14 @@ export const BACK_ID = "menu.back";
 export const PAGE_ID = "menu.page";
 
 /**
- * The inner ring for a (visible, ordered) operation list. Operations that still need a pack
- * never take a wedge: they go last under "More".
+ * The inner ring for a (visible, ordered) operation list. Operations marked `more` (Duplicate,
+ * Office-pack ops waiting for the pack) never take a wedge from the others: they go last under
+ * "More". When nothing else is left they are the wedges themselves, rather than a lone "More".
  */
 export function menuWedges(ops: Operation[]): Operation[] {
-  const ready = ops.filter((o) => !needsPack(o));
-  const later = ops.filter(needsPack);
+  let ready = ops.filter((o) => !o.more);
+  let later = ops.filter((o) => o.more);
+  if (!ready.length) [ready, later] = [later, []];
   if (!later.length && ready.length <= MAX_WEDGES) return ready;
   const top = ready.slice(0, MAX_WEDGES - 1);
   return [...top, { id: MORE_ID, label: "More", icon: "Ellipsis", children: [...ready.slice(MAX_WEDGES - 1), ...later] }];

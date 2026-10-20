@@ -9,6 +9,10 @@ use crate::{catalog, create_unique_sibling, Converter, EngineError, Operation, O
 pub struct CopyConverter;
 
 impl Converter for CopyConverter {
+    fn name(&self) -> &'static str {
+        "copy"
+    }
+
     fn can_handle(&self, _mime: &str) -> bool {
         true
     }

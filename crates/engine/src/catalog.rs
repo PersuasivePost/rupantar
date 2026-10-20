@@ -5,7 +5,8 @@
 //!   and icons from here via [`op`]; sub-option labels stay with the converter.
 //! - `Registry::operations` lists a type's menu in priority order (lower first). Entries no
 //!   converter implements yet are listed with `available: false`, so the menu hides them.
-//! - The frontend shows the first five visible operations as wedges and the rest under "More".
+//! - The frontend shows the first five visible operations as wedges and the rest under "More";
+//!   entries marked `in_more` (Duplicate) always go under More.
 //!
 //! Selection context: `multi_priority` replaces `priority` when two or more files are
 //! selected (Merge and Images → PDF move to the front).
@@ -47,10 +48,12 @@ pub struct Entry {
     pub batch: bool,
     /// The mime this writes; not offered for files that already are that type.
     pub produces: Option<&'static str>,
+    /// Always under "More", never one of the top wedges (`Operation::more`).
+    pub more: bool,
 }
 
 const fn e(id: &'static str, label: &'static str, icon: &'static str, priority: u16, group: Group) -> Entry {
-    Entry { id, label, icon, priority, group, multi_priority: None, batch: false, produces: None }
+    Entry { id, label, icon, priority, group, multi_priority: None, batch: false, produces: None, more: false }
 }
 
 impl Entry {
@@ -69,10 +72,16 @@ impl Entry {
         self
     }
 
-    /// The operation with this entry's label, icon and group (no priority, no children).
+    const fn in_more(mut self) -> Self {
+        self.more = true;
+        self
+    }
+
+    /// The operation with this entry's label, icon, group and `more` (no priority, no children).
     pub fn operation(&self) -> Operation {
         let mut op = Operation::new(self.id, self.label, self.icon);
         op.group = Some(self.group);
+        op.more = self.more;
         op
     }
 
@@ -85,7 +94,8 @@ impl Entry {
     }
 }
 
-const DUPLICATE: Entry = e("copy", "Duplicate", "Copy", 900, File);
+/// Last everywhere, and always under More: it never takes one of the top wedges.
+const DUPLICATE: Entry = e("copy", "Duplicate", "Copy", 900, File).in_more();
 
 pub const PDF_MENU: &[Entry] = &[
     e("pdf.merge", "Merge", "Merge", 5, Pages).multi(0).batch(),
@@ -303,6 +313,15 @@ mod tests {
         assert_eq!((merge.priority_for(1), merge.priority_for(2)), (5, 0));
         let split = PDF_MENU.iter().find(|e| e.id == "pdf.split").unwrap();
         assert_eq!((split.priority_for(1), split.priority_for(3)), (40, 40));
+    }
+
+    #[test]
+    fn duplicate_is_always_under_more() {
+        for (mimes, entries) in MENUS {
+            let more: Vec<&str> = entries.iter().filter(|e| e.more).map(|e| e.id).collect();
+            assert_eq!(more, ["copy"], "{mimes:?}");
+        }
+        assert!(op("copy").more && !op("pdf.split").more);
     }
 
     #[test]

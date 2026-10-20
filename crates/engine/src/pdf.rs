@@ -72,13 +72,14 @@ enum Action {
 /// Image recompression for `pdf.compress`: images larger than `max_side` px are downsampled,
 /// JPEGs re-encoded at `quality`; with `flate_to_jpeg`, lossless colour/grey images become JPEG.
 #[derive(Debug, Clone, Copy, PartialEq)]
-struct Preset {
-    max_side: u32,
-    quality: u8,
-    flate_to_jpeg: bool,
+pub(crate) struct Preset {
+    pub(crate) max_side: u32,
+    pub(crate) quality: u8,
+    pub(crate) flate_to_jpeg: bool,
 }
 
-const PRESETS: [(&str, &str, &str, Preset); 3] = [
+/// `(id suffix, label, icon, preset)`; DOCX compress (`office`) uses the same levels.
+pub(crate) const PRESETS: [(&str, &str, &str, Preset); 3] = [
     ("light", "Light", "Feather", Preset { max_side: 2400, quality: 85, flate_to_jpeg: false }),
     ("balanced", "Balanced", "Gauge", Preset { max_side: 1600, quality: 70, flate_to_jpeg: true }),
     ("strong", "Strong", "Minimize2", Preset { max_side: 1100, quality: 50, flate_to_jpeg: true }),
@@ -378,7 +379,7 @@ fn merge(inputs: &[PathBuf]) -> Result<PathBuf> {
 // ---- images -> PDF ----------------------------------------------------------------------
 
 /// Colour components declared in a JPEG's SOF header (1 = grey, 3 = YCbCr/RGB, 4 = CMYK).
-fn jpeg_components(b: &[u8]) -> Option<u8> {
+pub(crate) fn jpeg_components(b: &[u8]) -> Option<u8> {
     let mut i = 2; // past SOI
     while i + 4 <= b.len() {
         if b[i] != 0xFF {
@@ -1289,6 +1290,10 @@ fn check_inputs(inputs: &[PathBuf], allowed: &[&str]) -> Result<()> {
 }
 
 impl Converter for PdfConverter {
+    fn name(&self) -> &'static str {
+        "PDF"
+    }
+
     fn can_handle(&self, mime: &str) -> bool {
         mime == PDF || IMAGE_MIMES.contains(&mime)
     }

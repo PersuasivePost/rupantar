@@ -3,6 +3,7 @@
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex, RwLock};
+use std::time::Instant;
 
 use engine::{EngineConfig, Operation, Options, Registry};
 use serde::Serialize;
@@ -46,7 +47,8 @@ pub fn list_operations(engine: State<Engine>, mimes: Vec<String>) -> Vec<Operati
 
 /// Async + `spawn_blocking`: conversions can take seconds and sync commands run on the main
 /// thread, which would freeze the tray and window. File types are detected again here rather
-/// than trusted from the frontend.
+/// than trusted from the frontend. Each run is logged with the engine that did it (e.g. DOCX ->
+/// PDF: "LibreOffice" once the Office pack is installed, else "pandoc").
 #[tauri::command]
 pub async fn run_operation(
     engine: State<'_, Engine>,
@@ -56,8 +58,15 @@ pub async fn run_operation(
 ) -> Result<Vec<PathBuf>, String> {
     let registry = engine.current();
     tauri::async_runtime::spawn_blocking(move || {
+        let started = Instant::now();
         let mimes: Vec<String> = inputs.iter().map(|f| engine::mime::detect(f)).collect();
-        registry.run_for(&mimes, &op, &inputs, &options.unwrap_or_default())
+        let result = registry.run_traced(&mimes, &op, &inputs, &options.unwrap_or_default());
+        let secs = started.elapsed().as_secs_f32();
+        match &result {
+            Ok(run) => eprintln!("rupantar: {} on {} file(s) via {} in {secs:.1} s", op.id, inputs.len(), run.engine),
+            Err(e) => eprintln!("rupantar: {} on {} file(s) failed after {secs:.1} s: {e}", op.id, inputs.len()),
+        }
+        result.map(|run| run.outputs)
     })
     .await
     .map_err(|e| e.to_string())?
