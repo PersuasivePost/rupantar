@@ -2,23 +2,46 @@
 
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, RwLock};
 
-use engine::{Operation, Options, Registry};
+use engine::{EngineConfig, Operation, Options, Registry};
 use serde::Serialize;
 use tauri::{AppHandle, Manager, State};
 
 use crate::settings::{self, Settings};
 use crate::shell::{self, Shell, Summon};
 
-/// The converter registry, built once at startup with the tool paths found then.
-pub struct Engine(pub Arc<Registry>);
+/// The converter registry, built at startup with the tools found then, and rebuilt when the
+/// Office pack is installed or removed. A conversion keeps the registry it started with.
+pub struct Engine {
+    config: Mutex<EngineConfig>,
+    registry: RwLock<Arc<Registry>>,
+}
+
+impl Engine {
+    pub fn new(config: EngineConfig) -> Self {
+        let registry = RwLock::new(Arc::new(Registry::with_config(&config)));
+        Self { config: Mutex::new(config), registry }
+    }
+
+    pub fn current(&self) -> Arc<Registry> {
+        Arc::clone(&self.registry.read().unwrap())
+    }
+
+    /// Points the engine at a newly installed (or removed) LibreOffice.
+    pub fn set_soffice(&self, soffice: Option<PathBuf>) {
+        let mut config = self.config.lock().unwrap();
+        config.soffice_path = soffice;
+        *self.registry.write().unwrap() = Arc::new(Registry::with_config(&config));
+    }
+}
 
 /// Operations for a selection: `mimes` has one entry per file (see `FileBatch::mimes`).
-/// Unavailable ones (missing pandoc/typst) are included, flagged; the menu hides them.
+/// Unavailable ones (missing tools, planned) are included, flagged; the menu hides them, except
+/// ones that need a pack (`Operation::pack`), which it offers to download.
 #[tauri::command]
 pub fn list_operations(engine: State<Engine>, mimes: Vec<String>) -> Vec<Operation> {
-    engine.0.operations_for(&mimes)
+    engine.current().operations_for(&mimes)
 }
 
 /// Async + `spawn_blocking`: conversions can take seconds and sync commands run on the main
@@ -31,7 +54,7 @@ pub async fn run_operation(
     inputs: Vec<PathBuf>,
     options: Option<Options>,
 ) -> Result<Vec<PathBuf>, String> {
-    let registry = Arc::clone(&engine.0);
+    let registry = engine.current();
     tauri::async_runtime::spawn_blocking(move || {
         let mimes: Vec<String> = inputs.iter().map(|f| engine::mime::detect(f)).collect();
         registry.run_for(&mimes, &op, &inputs, &options.unwrap_or_default())

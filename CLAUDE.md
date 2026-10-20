@@ -4,7 +4,7 @@ Cross-platform desktop app (Tauri v2 + Rust backend; React + TypeScript + Vite +
 
 **UX flow:** the user summons a circular radial menu at the cursor (hotkey or file drop), drops/selects files, flicks toward an operation wedge, and the converted file is written next to the original.
 
-**Everything runs locally. No network access, ever** — no telemetry, no remote APIs, no CDN assets at runtime.
+**Everything runs locally. No network access, ever** — no telemetry, no remote APIs, no CDN assets at runtime. One exception: optional packs (today the Office pack, LibreOffice) are downloaded only after the user explicitly agrees, by the `packs` crate; conversions never touch the network.
 
 ## Repository layout
 
@@ -12,6 +12,7 @@ Cross-platform desktop app (Tauri v2 + Rust backend; React + TypeScript + Vite +
 Cargo.toml          # workspace root
 crates/engine/      # pure Rust: all conversion logic + tests. NO Tauri deps.
 crates/placement/   # pure window-placement math (multi-monitor / DPI), no deps
+crates/packs/       # optional downloads (Office pack): pinned builds, consent-gated download, verify, unpack
 src-tauri/          # thin shell: commands, tray, hotkeys, windows
 src/                # React frontend
   api.ts            # the only place the frontend talks to Rust
@@ -21,9 +22,10 @@ Plus `index.html`, `vite.config.ts` (port 5000, `strictPort`), and `src-tauri/ta
 
 ## Architecture rules
 
-1. **Cargo workspace** with three members:
+1. **Cargo workspace** with four members:
    - `crates/engine` — all conversion logic and its tests. Must never depend on `tauri` or any UI crate, so it builds and tests on Replit.
    - `crates/placement` — pure arithmetic for positioning the radial window (multi-monitor, mixed DPI). Split out of the shell only so it is testable on Replit.
+   - `crates/packs` — the only code that may use the network: downloads a pinned pack after consent, verifies its SHA-256, unpacks it into the app data dir. No Tauri deps; tested against a local HTTP server.
    - `src-tauri` — thin shell only: Tauri commands, tray, global hotkeys, window management. No conversion logic here; commands just delegate to the engine.
 2. **Engine trait** (each converter implements it):
    ```rust
@@ -46,7 +48,8 @@ Plus `index.html`, `vite.config.ts` (port 5000, `strictPort`), and `src-tauri/ta
 
 - Frontend dev (browser preview, mock mode): `npm run dev` (port 5000)
 - Frontend typecheck + bundle: `npm run build`
-- Engine tests: `cargo test -p engine`
+- Engine tests: `cargo test -p engine` (LibreOffice tests use `RUPANTAR_SOFFICE`, else `soffice`/`libreoffice` on PATH, and skip without one)
+- Pack tests: `cargo test -p packs` (local server, no network). The real pinned Linux build: `RUPANTAR_LO_TARBALL=<downloaded .tar.gz> cargo test -p packs -- --ignored`
 - Desktop dev (local only, needs webkit2gtk on Linux): `npm run tauri dev`. Run `scripts/fetch-sidecars.sh [target-triple]` first: `bundle.externalBin` makes Tauri refuse to build without `src-tauri/binaries/{pandoc,typst}-<triple>`. Also run `scripts/fetch-pdfium.sh [target-triple]`: `bundle.resources` needs `src-tauri/resources/pdfium/` (a Linux x64 `libpdfium.so` is committed; the script replaces it with the target's library).
 - Refresh the frontend's mock operations after changing engine ops: `UPDATE_SNAPSHOT=1 cargo test -p engine`
 
@@ -108,3 +111,10 @@ Keep this file updated as decisions are made. Append entries here (date — deci
 - 2026-10-20 — AI pack (planned): background removal uses BiRefNet lite only; Upscale uses Real-ESRGAN ncnn-vulkan (BSD-3, its notice must ship).
 - 2026-10-20 — Object eraser dropped from v1 and removed from the catalog. Open question: the LaMa / MI-GAN training-data licences (Places2 vs Places365) are unresolved.
 - 2026-10-20 — Spreadsheet leftovers (`sheets.rs`, pure Rust): CSV `sheet.sort.{asc,desc}` (column 1 or `options.column` = 1-based number / header name, `options.order`; numbers before text, case-insensitive text, empties last in both orders, stable; rows byte for byte, each ending with the header's line ending; `name (sorted).csv`) and `sheet.change_delimiter.{comma,semicolon,tab}` (target = suffix or `options.delimiter`, source = `options.source_delimiter` or sniffed; same source and target is `InvalidOption`; BOM and CRLF/LF kept, minimal requoting; `name (semicolon).csv`). Workbooks: `sheet.split` (each non-empty sheet → `name - Sheet.xlsx`, values only, dates keep a date format; < 2 data sheets is `Empty`) and `sheet.to_html` (standalone page, a table per sheet, `<h2>` per sheet when several). `data_sheets` / `write_per_sheet` are shared with To CSV / To JSON.
+- 2026-10-20 — Office pack = official LibreOffice 26.2.6 ("still" branch, build 26.2.6.3) per OS/arch, pinned in `crates/packs/src/lib.rs` (`office::BUILDS`) with TDF's sizes and SHA-256 (from `<file>.mirrorlist`); URLs: `download.documentfoundation.org/.../stable/26.2.6/...` (redirector) then `downloadarchive.../old/26.2.6.3/...` (permanent, same bytes; sizes checked for all six). Linux: the deb tarball, unpacked in pure Rust (`flate2` + `tar` + `ar` + `lzma-rust2`, no dpkg/C deps), only the debs a headless conversion needs (core, ure, writer, calc, impress, draw, math, graphicfilter, images, ooofonts, xsltfilter, en-us: ~546 MB of 732) and only their `opt/libreoffice*/` tree; paths that escape (`..`, through symlinks) are refused. Windows: `msiexec /a` (administrative install, no admin rights); macOS: `hdiutil attach` + `ditto LibreOffice.app`. Only linux/x86_64 is `tested: true` (installed and converting locally: 8.6 s release, ~25 s debug); the other five are written but untested.
+- 2026-10-20 — Pack install layout `<app data>/packs/office/`: `download/<file>.part` (kept on cancel/failure; a retry resumes with a Range request, each URL tried twice), `staging/` (removed on failure/cancel), `libreoffice-<version>/`, and `installed.json` written last (removed first on uninstall) — its presence means installed. A checksum mismatch deletes the download. `lzma-rust2`, `sha2`, `miniz_oxide` are built with opt-level 3 in the dev profile (unoptimized xz takes minutes).
+- 2026-10-20 — Consent: the shell's `install_office_pack` command is the only network path in the app; the frontend calls it only from a button pressed after the size is shown (consent dialog on first use of a pack op, or Settings → Office pack). Progress: `office-pack-progress` events (throttled ~8/s; phases download/verify/extract); `office-pack-changed` after install/remove; `cancel_office_pack` sets a flag checked between chunks. One install at a time. After install/remove the shell rebuilds the engine registry (`Engine::set_soffice`); conversions already running keep the old one. LibreOffice is never taken from PATH by the app (the pinned version only); tests may use a system one.
+- 2026-10-20 — `Operation.pack` (Rust + TS, e.g. `"office"`): set on ops that cannot run without that pack; with `available: false` the menu still shows them, always under More (never a top wedge), dimmed with "needs Office pack"; choosing one goes through `onPrompt` → `OfficePackDialog` (download, progress, cancel, errors) and, once installed, runs the op. Hide-on-blur is off while that dialog is up. `intersect` keeps a pack either side needs. Running a pack op without the pack is `EngineError::PackMissing`. Pack ops are leaves (no sub-options), so the consent flow can go straight on to running.
+- 2026-10-20 — LibreOffice converter (`crates/engine/src/libreoffice.rs`, registered first): Word types `doc.to_{pdf,docx,odt}`, Excel types `sheet.to_{pdf,xlsx,ods}`, PowerPoint types `slides.to_{pdf,pptx,odp}` and `slides.to_images` (LibreOffice → PDF → pdfium PNG at 150 DPI, `name (slide N).png`). New catalog entries: `doc.to_docx` (Word menu), `sheet.to_xlsx` (Excel menu), `slides.to_pptx` (PowerPoint menu), all `produces` their type. DOCX → PDF/ODT keep their pandoc path: LibreOffice offers them for DOCX only when installed (then it wins); `Registry::operations` now drops a second op with an id already listed. Each run: input copied to a private work dir as `document.<ext>`, fresh profile there (`-env:UserInstallation`), `soffice.bin` run directly (the `soffice` script/launcher would survive a timeout kill), exit 81 ("restart" after creating a profile) retried once, no output → readable `ToolFailed`. The sheet converter's `sheet.to_xlsx` now rejects non-CSV input (it used to parse anything as CSV).
+- 2026-10-20 — Settings window is 500x640 and resizable (was 460x380 fixed): Office pack section (status, size, Download/Resume, progress + Cancel, Remove) and an "Open-source licenses" screen listing pandoc 3.12 (GPL-2.0-or-later), Typst 0.15.1 (Apache-2.0), PDFium chromium/7881 (BSD-3 + others; pdfium-binaries MIT) and LibreOffice 26.2.6 (MPL-2.0), with bundled license texts (`src/licenses/`, imported `?raw`) and the notice files shipped beside pdfium / installed with the pack (`third_party_notices` command). Real-ESRGAN's BSD-3 notice joins this list when the AI pack lands.
+- 2026-10-20 — Not yet verified in the running desktop app (needs `npm run tauri dev` locally): the consent dialog → download → convert flow, Settings' Office pack section, and the Licenses screen's notice files. Tested: the pack install (local server, and the real pinned Linux tarball), and the converter against the installed pack. The browser mocks type-check but the dialog flow was not clicked through.

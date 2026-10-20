@@ -6,7 +6,7 @@ import {
 import { X, type LucideIcon } from "lucide-react";
 import type { Operation, Options } from "../api";
 import { fileIcon, iconFor } from "../icons";
-import { MORE_ID, RING_SLOTS, menuWedges, ringPage, visibleOperations, type Slot } from "../lib/operations";
+import { MORE_ID, RING_SLOTS, menuWedges, needsPack, ringPage, visibleOperations, type Slot } from "../lib/operations";
 import { TAU, angleFromUp, pickInSpan, pickWedge, polar, sectorPath } from "../lib/radial";
 
 // Geometry (px). Everything is laid out once in a SIZE x SIZE box centered on the cursor;
@@ -184,8 +184,9 @@ export function RadialMenu({ origin, file, operations: all, onConfirm, onPrompt,
   const confirm = useCallback(
     async (op: Operation, parent?: Operation) => {
       let options: Options | undefined;
-      if (op.prompt) {
-        // The menu steps aside while the host asks (e.g. the crop dialog), then shows progress.
+      if (op.prompt || needsPack(op)) {
+        // The menu steps aside while the host asks (the crop dialog, or the offer to download
+        // a missing pack), then shows progress.
         setPhase("prompt");
         const picked = onPrompt ? await onPrompt(op) : null;
         if (!picked) return onDismiss();
@@ -461,6 +462,7 @@ export function RadialMenu({ origin, file, operations: all, onConfirm, onPrompt,
                     rMid={(S_IN + S_OUT) / 2}
                     maxWidth={Math.min(96, labelWidth((S_IN + S_OUT) / 2, span, 0.85))}
                     label={sl.op.label}
+                    note={packNote(sl.op)}
                     Icon={iconFor(sl.op.icon)}
                     highlighted={sub === j}
                     hasChildren={ring.drillable && !!sl.op.children?.length}
@@ -497,6 +499,8 @@ export function RadialMenu({ origin, file, operations: all, onConfirm, onPrompt,
                       <span className="text-[15px] font-semibold leading-tight">{activeOp.label}</span>
                       {opensMore ? (
                         <span className="mt-0.5 text-[9px] uppercase tracking-wider" style={{ color: "var(--accent)" }}>click for more</span>
+                      ) : packNote(activeOp) ? (
+                        <span className="mt-0.5 text-[9px] uppercase tracking-wider" style={{ color: "var(--accent)" }}>{packNote(activeOp)}</span>
                       ) : (
                         <span className="mt-0.5 max-w-[78px] truncate text-[9px]" style={{ color: "var(--text-dim)" }}>{file.name}</span>
                       )}
@@ -598,6 +602,8 @@ interface SegmentProps {
   rMid: number;
   maxWidth: number;
   label: string;
+  /** A second, smaller line (e.g. "needs Office pack"); the wedge is dimmed. */
+  note?: string;
   Icon: LucideIcon;
   highlighted: boolean;
   hasChildren?: boolean;
@@ -606,7 +612,13 @@ interface SegmentProps {
 }
 
 /** One wedge. The outer layer owns the bloom/collapse variants; the inner layer owns the highlight scale. */
-function Segment({ uid, variants, custom, path, angle, rMid, maxWidth, label, Icon, highlighted, hasChildren, reduced, small }: SegmentProps) {
+/** "needs Office pack" for an operation whose pack isn't installed. */
+function packNote(op: Operation): string | undefined {
+  if (!needsPack(op)) return undefined;
+  return op.pack === "office" ? "needs Office pack" : `needs ${op.pack} pack`;
+}
+
+function Segment({ uid, variants, custom, path, angle, rMid, maxWidth, label, note, Icon, highlighted, hasChildren, reduced, small }: SegmentProps) {
   const p = polar(rMid, angle);
   return (
     <motion.div className="absolute inset-0" style={{ willChange: "transform, opacity" }} variants={variants} custom={custom}>
@@ -625,15 +637,16 @@ function Segment({ uid, variants, custom, path, angle, rMid, maxWidth, label, Ic
         </svg>
         <motion.div
           role="menuitem"
-          aria-label={label}
+          aria-label={note ? `${label} (${note})` : label}
           className="absolute flex flex-col items-center"
           style={{ left: C + p.x, top: C + p.y, x: "-50%", y: "-50%" }}
-          animate={{ scale: highlighted && !reduced ? 1.12 : 1, opacity: highlighted ? 1 : 0.78 }}
+          animate={{ scale: highlighted && !reduced ? 1.12 : 1, opacity: highlighted ? 1 : note ? 0.55 : 0.78 }}
           transition={{ type: "spring", stiffness: 520, damping: 30 }}
         >
           <Icon size={small ? 18 : 24} strokeWidth={1.7} />
           <span className={`mt-1 text-center font-medium leading-[1.1] ${small ? "text-[10px]" : "text-[11px]"}`}
             style={{ maxWidth, textWrap: "balance" }}>{label}</span>
+          {note && <span className="mt-0.5 text-center text-[8px] leading-[1.1]" style={{ maxWidth, color: "var(--accent)" }}>{note}</span>}
           {hasChildren && <span className="mt-1 h-[3px] w-[3px] rounded-full" style={{ background: "var(--accent)" }} />}
         </motion.div>
       </motion.div>

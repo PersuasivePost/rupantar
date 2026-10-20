@@ -200,16 +200,20 @@ pub fn apply_autostart(app: &AppHandle, enabled: bool) -> Result<(), String> {
 /// executable (`Contents/MacOS` on macOS) without the target-triple suffix, and `tauri dev`
 /// copies them there too; PATH is the fallback (the engine does that part). pdfium is a bundled
 /// resource (`resources/pdfium/` -> `<resource dir>/pdfium/`), looked for there, then next to
-/// the executable.
+/// the executable. LibreOffice comes only from the Office pack (pinned version), never PATH.
 pub fn engine_config(app: &AppHandle) -> engine::EngineConfig {
     let exe_dir = std::env::current_exe().ok().and_then(|p| p.parent().map(Path::to_path_buf));
     let mut config = engine::EngineConfig::locate(exe_dir.as_slice());
     let pdfium_dirs: Vec<PathBuf> =
         app.path().resource_dir().ok().map(|d| d.join("pdfium")).into_iter().chain(exe_dir).collect();
     config.pdfium_path = engine::pdf::find_pdfium(&pdfium_dirs);
-    for (tool, path) in
-        [("pandoc", &config.pandoc_path), ("typst", &config.typst_path), ("pdfium", &config.pdfium_path)]
-    {
+    config.soffice_path = crate::office_pack::program(app);
+    for (tool, path) in [
+        ("pandoc", &config.pandoc_path),
+        ("typst", &config.typst_path),
+        ("pdfium", &config.pdfium_path),
+        ("LibreOffice (Office pack)", &config.soffice_path),
+    ] {
         match path {
             Some(p) => eprintln!("rupantar: using {tool} at {}", p.display()),
             None => eprintln!("rupantar: {tool} not found; operations that need it are hidden"),

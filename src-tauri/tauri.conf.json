@@ -36,11 +36,13 @@
         "label": "settings",
         "title": "Rupantar Settings",
         "url": "index.html#/settings",
-        "width": 460,
-        "height": 380,
+        "width": 500,
+        "height": 640,
+        "minWidth": 420,
+        "minHeight": 420,
         "visible": false,
         "center": true,
-        "resizable": false,
+        "resizable": true,
         "maximizable": false
       }
     ],

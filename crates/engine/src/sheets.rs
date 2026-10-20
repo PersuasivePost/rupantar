@@ -826,6 +826,10 @@ impl Converter for SheetConverter {
             }
             Ok(out)
         } else if is_op(id, TO_XLSX) {
+            // Workbook -> XLSX is LibreOffice's (registered first); here only CSV is read.
+            if let Some(m) = inputs.iter().map(|i| crate::mime::detect(i)).find(|m| m != CSV) {
+                return Err(EngineError::UnsupportedFormat(m));
+            }
             let delim = delimiter(id, TO_XLSX, options)?;
             inputs.iter().map(|input| csv_to_xlsx(input, delim)).collect()
         } else if is_op(id, TO_JSON) {

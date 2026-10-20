@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { motion, useReducedMotion } from "framer-motion";
 import { Crop, X } from "lucide-react";
 import { previewImage, type ImagePreview, type Operation, type Options } from "../api";
+import { needsPack } from "../lib/operations";
+import { OfficePackDialog } from "./OfficePackDialog";
 
 /** In original-image pixels. */
 interface Rect {
@@ -21,25 +23,33 @@ const HANDLES: Handle[] = ["nw", "n", "ne", "e", "se", "s", "sw", "w"];
 const clamp = (v: number, lo: number, hi: number) => Math.min(Math.max(v, lo), hi);
 
 /**
- * Asks for whatever a prompted operation needs (`op.prompt`) and resolves to its options, or
- * null when cancelled. Render `element` somewhere above the menu.
+ * Asks for whatever an operation needs before it can run and resolves to its options, or null
+ * when cancelled: a missing pack (`needsPack`: the offer to download it; resolves `{}` once
+ * installed) or a prompt (`op.prompt`, e.g. `crop`). Render `element` somewhere above the menu.
  */
 export function usePrompt() {
-  const [req, setReq] = useState<{ path: string; name: string; resolve: (o: Options | null) => void } | null>(null);
+  const [req, setReq] = useState<{ op: Operation; path: string; name: string; resolve: (o: Options | null) => void } | null>(null);
   const prompt = useCallback(
     (op: Operation, path: string, name: string) =>
       new Promise<Options | null>((resolve) => {
-        if (op.prompt !== "crop") return resolve(null); // unknown prompt: nothing to ask
-        setReq({ path, name, resolve });
+        if (!needsPack(op) && op.prompt !== "crop") return resolve(null); // unknown prompt: nothing to ask
+        setReq({ op, path, name, resolve });
       }),
     [],
   );
-  const finish = (options: Options | null) => {
-    req?.resolve(options);
-    setReq(null);
-  };
-  const element = req && <CropDialog key={req.path} path={req.path} name={req.name} onDone={finish} />;
-  return { prompt, element };
+  const finish = useCallback((options: Options | null) => {
+    setReq((r) => {
+      r?.resolve(options);
+      return null;
+    });
+  }, []);
+  const onPack = useCallback((installed: boolean) => finish(installed ? {} : null), [finish]);
+  const element = req && (needsPack(req.op)
+    ? <OfficePackDialog key={req.op.id} op={req.op} onDone={onPack} />
+    : <CropDialog key={req.path} path={req.path} name={req.name} onDone={finish} />);
+  /** A download dialog is up: the window must stay while the user switches away. */
+  const busy = !!req && needsPack(req.op);
+  return { prompt, element, busy };
 }
 
 /** Pick a crop rectangle over a preview: drag to draw, drag inside to move, handles to resize. */

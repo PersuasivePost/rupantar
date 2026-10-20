@@ -130,7 +130,7 @@ fn describe(status: ExitStatus) -> String {
 
 /// The part of a tool's stderr worth showing: warnings dropped when there is an actual error,
 /// whitespace collapsed, and the tail kept if it is long (the error is usually last).
-fn readable(stderr: &str) -> String {
+pub(crate) fn readable(stderr: &str) -> String {
     let lines: Vec<&str> = stderr.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
     let errors: Vec<&str> = lines.iter().copied().filter(|l| !l.starts_with("[WARNING]")).collect();
     let text = if errors.is_empty() { lines.join(" ") } else { errors.join(" ") };

@@ -1,12 +1,12 @@
 //! Thin Tauri shell: tray, global shortcut, windows. Conversion logic lives in `engine`.
 
 mod commands;
+mod office_pack;
 mod settings;
 mod shell;
 mod tray;
 
 use std::path::Path;
-use std::sync::Arc;
 
 use tauri::{Manager, RunEvent};
 use tauri_plugin_autostart::MacosLauncher;
@@ -34,8 +34,13 @@ pub fn run() {
             commands::get_settings,
             commands::set_shortcut,
             commands::set_autostart,
+            office_pack::office_pack_status,
+            office_pack::install_office_pack,
+            office_pack::cancel_office_pack,
+            office_pack::remove_office_pack,
+            office_pack::third_party_notices,
         ])
-        .on_window_event(|window, event| shell::on_window_event(window, event))
+        .on_window_event(shell::on_window_event)
         .setup(|app| {
             // Tray-resident: no Dock icon on macOS.
             #[cfg(target_os = "macos")]
@@ -43,7 +48,8 @@ pub fn run() {
 
             app.handle().plugin(tauri_plugin_global_shortcut::Builder::new().build())?;
             app.manage(shell::Shell::new());
-            app.manage(commands::Engine(Arc::new(engine::Registry::with_config(&shell::engine_config(app.handle())))));
+            app.manage(commands::Engine::new(shell::engine_config(app.handle())));
+            app.manage(office_pack::OfficeJob::default());
 
             let handle = app.handle();
             let saved = settings::load(handle);

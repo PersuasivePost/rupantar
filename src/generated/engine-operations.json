@@ -63,12 +63,22 @@
   "operations": {
     "application/msword": [
       {
-        "available": false,
+        "available": true,
         "group": "convert",
         "icon": "FileText",
         "id": "doc.to_pdf",
         "label": "To PDF",
+        "pack": "office",
         "priority": 10
+      },
+      {
+        "available": true,
+        "group": "convert",
+        "icon": "FileType",
+        "id": "doc.to_docx",
+        "label": "To Word",
+        "pack": "office",
+        "priority": 15
       },
       {
         "available": false,
@@ -103,11 +113,12 @@
         "priority": 50
       },
       {
-        "available": false,
+        "available": true,
         "group": "convert",
         "icon": "FilePen",
         "id": "doc.to_odt",
         "label": "To ODT",
+        "pack": "office",
         "priority": 60
       },
       {
@@ -446,11 +457,21 @@
         "priority": 10
       },
       {
-        "available": false,
+        "available": true,
+        "group": "convert",
+        "icon": "FileSpreadsheet",
+        "id": "sheet.to_xlsx",
+        "label": "To Excel",
+        "pack": "office",
+        "priority": 15
+      },
+      {
+        "available": true,
         "group": "convert",
         "icon": "FileText",
         "id": "sheet.to_pdf",
         "label": "To PDF",
+        "pack": "office",
         "priority": 20
       },
       {
@@ -478,11 +499,12 @@
         "priority": 50
       },
       {
-        "available": false,
+        "available": true,
         "group": "convert",
         "icon": "FileSpreadsheet",
         "id": "sheet.to_ods",
         "label": "To ODS",
+        "pack": "office",
         "priority": 60
       },
       {
@@ -504,19 +526,30 @@
     ],
     "application/vnd.ms-powerpoint": [
       {
-        "available": false,
+        "available": true,
         "group": "convert",
         "icon": "FileText",
         "id": "slides.to_pdf",
         "label": "To PDF",
+        "pack": "office",
         "priority": 10
       },
       {
-        "available": false,
+        "available": true,
+        "group": "convert",
+        "icon": "Presentation",
+        "id": "slides.to_pptx",
+        "label": "To PowerPoint",
+        "pack": "office",
+        "priority": 15
+      },
+      {
+        "available": true,
         "group": "convert",
         "icon": "Images",
         "id": "slides.to_images",
         "label": "To images",
+        "pack": "office",
         "priority": 20
       },
       {
@@ -544,11 +577,12 @@
         "priority": 50
       },
       {
-        "available": false,
+        "available": true,
         "group": "convert",
         "icon": "Presentation",
         "id": "slides.to_odp",
         "label": "To ODP",
+        "pack": "office",
         "priority": 60
       },
       {
@@ -562,19 +596,30 @@
     ],
     "application/vnd.oasis.opendocument.presentation": [
       {
-        "available": false,
+        "available": true,
         "group": "convert",
         "icon": "FileText",
         "id": "slides.to_pdf",
         "label": "To PDF",
+        "pack": "office",
         "priority": 10
       },
       {
-        "available": false,
+        "available": true,
+        "group": "convert",
+        "icon": "Presentation",
+        "id": "slides.to_pptx",
+        "label": "To PowerPoint",
+        "pack": "office",
+        "priority": 15
+      },
+      {
+        "available": true,
         "group": "convert",
         "icon": "Images",
         "id": "slides.to_images",
         "label": "To images",
+        "pack": "office",
         "priority": 20
       },
       {
@@ -640,11 +685,21 @@
         "priority": 10
       },
       {
-        "available": false,
+        "available": true,
+        "group": "convert",
+        "icon": "FileSpreadsheet",
+        "id": "sheet.to_xlsx",
+        "label": "To Excel",
+        "pack": "office",
+        "priority": 15
+      },
+      {
+        "available": true,
         "group": "convert",
         "icon": "FileText",
         "id": "sheet.to_pdf",
         "label": "To PDF",
+        "pack": "office",
         "priority": 20
       },
       {
@@ -690,12 +745,22 @@
     ],
     "application/vnd.oasis.opendocument.text": [
       {
-        "available": false,
+        "available": true,
         "group": "convert",
         "icon": "FileText",
         "id": "doc.to_pdf",
         "label": "To PDF",
+        "pack": "office",
         "priority": 10
+      },
+      {
+        "available": true,
+        "group": "convert",
+        "icon": "FileType",
+        "id": "doc.to_docx",
+        "label": "To Word",
+        "pack": "office",
+        "priority": 15
       },
       {
         "available": false,
@@ -756,19 +821,21 @@
     ],
     "application/vnd.openxmlformats-officedocument.presentationml.presentation": [
       {
-        "available": false,
+        "available": true,
         "group": "convert",
         "icon": "FileText",
         "id": "slides.to_pdf",
         "label": "To PDF",
+        "pack": "office",
         "priority": 10
       },
       {
-        "available": false,
+        "available": true,
         "group": "convert",
         "icon": "Images",
         "id": "slides.to_images",
         "label": "To images",
+        "pack": "office",
         "priority": 20
       },
       {
@@ -796,11 +863,12 @@
         "priority": 50
       },
       {
-        "available": false,
+        "available": true,
         "group": "convert",
         "icon": "Presentation",
         "id": "slides.to_odp",
         "label": "To ODP",
+        "pack": "office",
         "priority": 60
       },
       {
@@ -842,11 +910,12 @@
         "priority": 10
       },
       {
-        "available": false,
+        "available": true,
         "group": "convert",
         "icon": "FileText",
         "id": "sheet.to_pdf",
         "label": "To PDF",
+        "pack": "office",
         "priority": 20
       },
       {
@@ -874,11 +943,12 @@
         "priority": 50
       },
       {
-        "available": false,
+        "available": true,
         "group": "convert",
         "icon": "FileSpreadsheet",
         "id": "sheet.to_ods",
         "label": "To ODS",
+        "pack": "office",
         "priority": 60
       },
       {

@@ -1,0 +1,23 @@
+[package]
+name = "packs"
+version = "0.1.0"
+edition = "2021"
+description = "Optional downloads (the Office pack): pinned builds, consent-gated download, verify, install"
+
+[dependencies]
+# .deb members (Linux LibreOffice builds ship as a tarball of debs).
+ar = "0.9"
+flate2 = "1"
+# Pure-Rust xz, for the debs' data.tar.xz (no C toolchain needed).
+lzma-rust2 = { version = "0.23", default-features = false, features = ["std", "xz"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+tar = "0.4"
+thiserror = "1"
+ureq = { version = "3", default-features = false, features = ["rustls"] }
+
+[dev-dependencies]
+tempfile = "3"
+# Fixtures: debs with an xz-compressed data.tar, like the real ones.
+lzma-rust2 = { version = "0.23", default-features = false, features = ["std", "xz", "encoder"] }

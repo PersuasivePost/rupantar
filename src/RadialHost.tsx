@@ -21,7 +21,7 @@ const EXIT_MS = 380;
 export default function RadialHost() {
   const [state, setState] = useState<State>({ kind: "idle" });
   const [dragOver, setDragOver] = useState(false);
-  const { prompt, element: promptElement } = usePrompt();
+  const { prompt, element: promptElement, busy: promptBusy } = usePrompt();
   const origin = useRef<Origin>({ x: 300, y: 300 });
   const nextId = useRef(1);
   const hideTimer = useRef<number>();
@@ -107,10 +107,11 @@ export default function RadialHost() {
   }, [open]);
 
   // Clicking away dismisses an open menu, but must not cancel the "drop files here" state: the
-  // user is about to drag from another window, which takes focus.
+  // user is about to drag from another window, which takes focus. Nor the Office pack dialog:
+  // its download takes a while and the user may well switch windows meanwhile.
   useEffect(() => {
-    void setHideOnBlur(state.kind === "menu");
-  }, [state.kind]);
+    void setHideOnBlur(state.kind === "menu" && !promptBusy);
+  }, [state.kind, promptBusy]);
 
   // Ctrl/Cmd+O browses while the drop target is up (an open menu handles it itself).
   useEffect(() => {

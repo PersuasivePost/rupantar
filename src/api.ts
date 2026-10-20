@@ -22,6 +22,11 @@ export interface Operation {
   group?: string;
   /** The UI asks for options first (`crop`: a rectangle). Only offered for one file. */
   prompt?: string;
+  /**
+   * An optional download this needs (`office`: LibreOffice). With `available: false` the menu
+   * still shows it, under More, and choosing it offers the download.
+   */
+  pack?: string;
 }
 
 export type Options = Record<string, string>;
@@ -59,13 +64,17 @@ export interface MockTools {
   pandoc: boolean;
   typst: boolean;
   pdfium: boolean;
+  /** The Office pack (LibreOffice) is installed. */
+  office: boolean;
 }
 
-let mockTools: MockTools = { pandoc: true, typst: true, pdfium: true };
+let mockTools: MockTools = { pandoc: true, typst: true, pdfium: true, office: false };
 
 /** Playground: pretend tools are missing, to see their operations disappear. */
 export function setMockTools(tools: MockTools): void {
+  const changed = tools.office !== mockTools.office;
   mockTools = { ...tools };
+  if (changed) mockPackChanged();
 }
 
 let showPlanned = false;
@@ -121,15 +130,17 @@ function mockOperations(mime: string): Operation[] {
 
 /** Marks operations unavailable the way the engine does when a tool is missing. */
 function withAvailability(ops: Operation[]): Operation[] {
-  const needs = (id: string) =>
-    ((id.startsWith("doc.") && id !== "doc.extract_images") && !mockTools.pandoc) ||
-    (/^pdf\.to_(pptx|docx)$/.test(id) && !mockTools.pandoc) ||
-    (id === "doc.to_pdf" && !mockTools.typst) ||
-    (/^pdf\.to_(image|png|jpg|text|pptx|docx)/.test(id) && !mockTools.pdfium);
+  const needs = (id: string, pack?: string): boolean => {
+    if (pack === "office") return !mockTools.office || (id === "slides.to_images" && !mockTools.pdfium);
+    return ((id.startsWith("doc.") && id !== "doc.extract_images") && !mockTools.pandoc) ||
+      (/^pdf\.to_(pptx|docx)$/.test(id) && !mockTools.pandoc) ||
+      (id === "doc.to_pdf" && !mockTools.typst) ||
+      (/^pdf\.to_(image|png|jpg|text|pptx|docx)/.test(id) && !mockTools.pdfium);
+  };
   // The snapshot is taken with every tool present, so `available: false` there means planned.
   return ops.map((o) => ({
     ...o,
-    available: (showPlanned || o.available !== false) && !needs(o.id),
+    available: (showPlanned || o.available !== false) && !needs(o.id, o.pack),
     ...(o.children && { children: withAvailability(o.children) }),
   }));
 }
@@ -278,4 +289,129 @@ export async function setAutostart(enabled: boolean): Promise<Settings> {
   if (isTauri()) return invoke<Settings>("set_autostart", { enabled });
   mockSettings = { ...mockSettings, autostart: enabled };
   return { ...mockSettings };
+}
+
+// ---- Office pack ----------------------------------------------------------------------------
+// LibreOffice, downloaded only after the user agreed (see src-tauri/src/office_pack.rs).
+
+export interface PackOffer {
+  version: string;
+  download_bytes: number;
+  installed_bytes: number;
+  /** Already on disk from an interrupted download; a retry resumes after it. */
+  downloaded_bytes: number;
+  /** False when this platform's build hasn't been tried on a real machine yet. */
+  tested: boolean;
+  source: string;
+}
+
+export interface PackStatus {
+  state: "installed" | "installing" | "not_installed" | "unsupported";
+  installed: { version: string; program: string; size: number } | null;
+  offer: PackOffer | null;
+}
+
+export interface PackProgress {
+  phase: "download" | "verify" | "extract";
+  done: number;
+  total: number;
+}
+
+export interface Notice {
+  name: string;
+  text: string;
+}
+
+/** Rejection message when the user cancelled the download. */
+export const PACK_CANCELLED = "cancelled";
+
+export async function officePackStatus(): Promise<PackStatus> {
+  return isTauri() ? invoke<PackStatus>("office_pack_status") : mockPackStatus();
+}
+
+/**
+ * Downloads and installs the Office pack. Call it only from a button the user pressed after
+ * seeing the size: this is the app's one network access. Rejects with `PACK_CANCELLED` or a
+ * readable error.
+ */
+export async function installOfficePack(): Promise<PackStatus> {
+  return isTauri() ? invoke<PackStatus>("install_office_pack") : mockInstall();
+}
+
+export async function cancelOfficePack(): Promise<void> {
+  if (isTauri()) await invoke("cancel_office_pack");
+  else mockCancel = true;
+}
+
+export async function removeOfficePack(): Promise<PackStatus> {
+  if (isTauri()) return invoke<PackStatus>("remove_office_pack");
+  mockTools = { ...mockTools, office: false };
+  mockDownloaded = 0;
+  mockPackChanged();
+  return mockPackStatus();
+}
+
+export async function onOfficePackProgress(cb: (p: PackProgress) => void): Promise<Unlisten> {
+  if (isTauri()) return listen<PackProgress>("office-pack-progress", (e) => cb(e.payload));
+  mockProgressListeners.add(cb);
+  return () => void mockProgressListeners.delete(cb);
+}
+
+/** Fires when the pack was installed or removed (from any window). */
+export async function onOfficePackChanged(cb: (s: PackStatus) => void): Promise<Unlisten> {
+  if (isTauri()) return listen<PackStatus>("office-pack-changed", (e) => cb(e.payload));
+  mockChangedListeners.add(cb);
+  return () => void mockChangedListeners.delete(cb);
+}
+
+/** License/notice files shipped with a component: `pdfium` (bundled) or `office` (when installed). */
+export async function thirdPartyNotices(component: "pdfium" | "office"): Promise<Notice[]> {
+  if (isTauri()) return invoke<Notice[]>("third_party_notices", { component });
+  return [{ name: "NOTICE", text: `(${component} notices are read from disk in the desktop app)` }];
+}
+
+// Browser mock: a pretend 217 MB download that takes a few seconds, resumable and cancellable.
+const MOCK_OFFER = { version: "26.2.6", download_bytes: 217_285_735, installed_bytes: 560_000_000, tested: true, source: "documentfoundation.org" };
+let mockInstalling = false;
+let mockCancel = false;
+let mockDownloaded = 0;
+const mockProgressListeners = new Set<(p: PackProgress) => void>();
+const mockChangedListeners = new Set<(s: PackStatus) => void>();
+
+function mockPackStatus(): PackStatus {
+  const installed = mockTools.office ? { version: MOCK_OFFER.version, program: "soffice", size: 546_000_000 } : null;
+  const state = mockInstalling ? "installing" : installed ? "installed" : "not_installed";
+  return { state, installed, offer: { ...MOCK_OFFER, downloaded_bytes: mockDownloaded } };
+}
+
+function mockPackChanged(): void {
+  const s = mockPackStatus();
+  mockChangedListeners.forEach((cb) => cb(s));
+}
+
+async function mockInstall(): Promise<PackStatus> {
+  if (mockInstalling) throw "the Office pack is already being downloaded";
+  mockInstalling = true;
+  mockCancel = false;
+  const emit = (p: PackProgress) => mockProgressListeners.forEach((cb) => cb(p));
+  const total = MOCK_OFFER.download_bytes;
+  try {
+    for (const [phase, ms] of [["download", 3200], ["verify", 500], ["extract", 900]] as const) {
+      let done = phase === "download" ? mockDownloaded : 0;
+      const step = total / (ms / 50);
+      while (done < total) {
+        await new Promise((r) => setTimeout(r, 50));
+        if (mockCancel) throw PACK_CANCELLED;
+        done = Math.min(total, done + step);
+        if (phase === "download") mockDownloaded = done;
+        emit({ phase, done, total });
+      }
+    }
+    mockTools = { ...mockTools, office: true };
+    mockDownloaded = 0;
+  } finally {
+    mockInstalling = false;
+  }
+  mockPackChanged();
+  return mockPackStatus();
 }

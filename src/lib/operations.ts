@@ -2,9 +2,16 @@
 // crates/engine/src/lib.rs (the browser mocks use it); keep the two in step.
 import type { Operation } from "../api";
 
-/** What the menu renders: unavailable operations dropped, and parents left with no children. */
+/** Unavailable only because a pack (e.g. the Office pack) isn't installed: shown, offers the download. */
+export const needsPack = (op: Operation): boolean => op.available === false && !!op.pack;
+
+/**
+ * What the menu renders: unavailable operations dropped (except those that only need a pack),
+ * and parents left with no children.
+ */
 export function visibleOperations(ops: Operation[]): Operation[] {
   return ops.flatMap((op) => {
+    if (needsPack(op)) return [op];
     if (op.available === false) return [];
     if (!op.children?.length) return [op];
     const children = visibleOperations(op.children);
@@ -18,9 +25,11 @@ export function intersectOperations(a: Operation[], b: Operation[]): Operation[]
     const other = b.find((o) => o.id === op.id);
     if (!other) return [];
     const available = op.available !== false && other.available !== false;
-    if (!op.children?.length) return [{ ...op, available }];
+    const pack = op.pack ?? other.pack;
+    const merged = { ...op, available, ...(pack && { pack }) };
+    if (!op.children?.length) return [merged];
     const children = intersectOperations(op.children, other.children ?? []);
-    return children.length ? [{ ...op, children, available }] : [];
+    return children.length ? [{ ...merged, children }] : [];
   });
 }
 
@@ -63,11 +72,16 @@ export const MORE_ID = "menu.more";
 export const BACK_ID = "menu.back";
 export const PAGE_ID = "menu.page";
 
-/** The inner ring for a (visible, ordered) operation list. */
+/**
+ * The inner ring for a (visible, ordered) operation list. Operations that still need a pack
+ * never take a wedge: they go last under "More".
+ */
 export function menuWedges(ops: Operation[]): Operation[] {
-  if (ops.length <= MAX_WEDGES) return ops;
-  const top = ops.slice(0, MAX_WEDGES - 1);
-  return [...top, { id: MORE_ID, label: "More", icon: "Ellipsis", children: ops.slice(MAX_WEDGES - 1) }];
+  const ready = ops.filter((o) => !needsPack(o));
+  const later = ops.filter(needsPack);
+  if (!later.length && ready.length <= MAX_WEDGES) return ready;
+  const top = ready.slice(0, MAX_WEDGES - 1);
+  return [...top, { id: MORE_ID, label: "More", icon: "Ellipsis", children: [...ready.slice(MAX_WEDGES - 1), ...later] }];
 }
 
 export type Slot =

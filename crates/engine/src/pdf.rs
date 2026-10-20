@@ -888,7 +888,7 @@ fn pdfium_error(e: pdfium_render::prelude::PdfiumError) -> EngineError {
 
 /// Renders each page at `dpi` on white and hands it to `each(index, page count, image)`, one at
 /// a time (a long document never has every page in memory).
-fn render_pages(library: &Path, input: &Path, dpi: u16, mut each: impl FnMut(usize, usize, DynamicImage) -> Result<()>) -> Result<()> {
+pub(crate) fn render_pages(library: &Path, input: &Path, dpi: u16, mut each: impl FnMut(usize, usize, DynamicImage) -> Result<()>) -> Result<()> {
     if !input.is_file() {
         return Err(EngineError::InputNotFound(input.to_path_buf()));
     }

@@ -1,5 +1,14 @@
 [workspace]
 resolver = "2"
-members = ["crates/engine", "crates/placement", "src-tauri"]
+members = ["crates/engine", "crates/placement", "crates/packs", "src-tauri"]
 # Bare `cargo test/build` skips src-tauri, so Replit never needs webkit2gtk.
-default-members = ["crates/engine", "crates/placement"]
+default-members = ["crates/engine", "crates/placement", "crates/packs"]
+
+# Installing the Office pack decompresses ~200 MB of xz and hashes it; unoptimized (as in
+# `tauri dev`) that takes minutes instead of seconds.
+[profile.dev.package.lzma-rust2]
+opt-level = 3
+[profile.dev.package.sha2]
+opt-level = 3
+[profile.dev.package.miniz_oxide]
+opt-level = 3

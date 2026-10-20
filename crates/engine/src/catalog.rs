@@ -123,6 +123,7 @@ pub const IMAGE_MENU: &[Entry] = &[
 
 pub const WORD_MENU: &[Entry] = &[
     e("doc.to_pdf", "To PDF", "FileText", 10, Convert).produces(PDF),
+    e("doc.to_docx", "To Word", "FileType", 15, Convert).produces(DOCX),
     e("doc.to_md", "To Markdown", "FileCode", 20, Convert).produces(MARKDOWN),
     e("doc.to_html", "To HTML", "Globe", 30, Convert).produces(HTML),
     e("doc.compress", "Compress", "Minimize2", 40, Optimize),
@@ -135,6 +136,7 @@ pub const WORD_MENU: &[Entry] = &[
 
 pub const EXCEL_MENU: &[Entry] = &[
     e("sheet.to_csv", "To CSV", "Rows3", 10, Convert).produces(CSV),
+    e("sheet.to_xlsx", "To Excel", "FileSpreadsheet", 15, Convert).produces(XLSX),
     e("sheet.to_pdf", "To PDF", "FileText", 20, Convert).produces(PDF),
     e("sheet.to_json", "To JSON", "Braces", 30, Convert),
     e("sheet.split", "Split sheets", "Split", 40, Pages),
@@ -146,6 +148,7 @@ pub const EXCEL_MENU: &[Entry] = &[
 
 pub const POWERPOINT_MENU: &[Entry] = &[
     e("slides.to_pdf", "To PDF", "FileText", 10, Convert).produces(PDF),
+    e("slides.to_pptx", "To PowerPoint", "Presentation", 15, Convert).produces(PPTX),
     e("slides.to_images", "To images", "Images", 20, Convert),
     e("slides.extract_images", "Extract images", "ImageDown", 30, Extract),
     e("slides.compress", "Compress", "Minimize2", 40, Optimize),
@@ -239,21 +242,28 @@ mod tests {
                 ["Rotate / flip", "Grayscale", "Upscale", "Edit", "Strip metadata", "Watermark", "Duplicate"]
             );
         }
-        for word in [DOCX, DOC] {
-            assert_eq!(top(word), ["To PDF", "To Markdown", "To HTML", "Compress", "Extract images"]);
-            assert_eq!(more(word), ["To ODT", "To EPUB", "To text", "Duplicate"]);
+        // No conversion to the file's own type (DOCX -> Word, ODT -> ODT, XLSX -> Excel, ...).
+        assert_eq!(top(DOCX), ["To PDF", "To Markdown", "To HTML", "Compress", "Extract images"]);
+        assert_eq!(more(DOCX), ["To ODT", "To EPUB", "To text", "Duplicate"]);
+        for word in [DOC, ODT] {
+            assert_eq!(top(word), ["To PDF", "To Word", "To Markdown", "To HTML", "Compress"]);
         }
-        assert_eq!(more(ODT), ["To EPUB", "To text", "Duplicate"], "no ODT -> ODT");
-        for sheet in [XLSX, XLS] {
-            assert_eq!(top(sheet), ["To CSV", "To PDF", "To JSON", "Split sheets", "Compress"]);
-            assert_eq!(more(sheet), ["To ODS", "To HTML", "Duplicate"]);
+        assert_eq!(more(DOC), ["Extract images", "To ODT", "To EPUB", "To text", "Duplicate"]);
+        assert_eq!(more(ODT), ["Extract images", "To EPUB", "To text", "Duplicate"]);
+        assert_eq!(top(XLSX), ["To CSV", "To PDF", "To JSON", "Split sheets", "Compress"]);
+        assert_eq!(more(XLSX), ["To ODS", "To HTML", "Duplicate"]);
+        for sheet in [XLS, ODS] {
+            assert_eq!(top(sheet), ["To CSV", "To Excel", "To PDF", "To JSON", "Split sheets"]);
         }
-        assert_eq!(more(ODS), ["To HTML", "Duplicate"]);
-        for deck in [PPTX, PPT] {
-            assert_eq!(top(deck), ["To PDF", "To images", "Extract images", "Compress", "To text"]);
-            assert_eq!(more(deck), ["To ODP", "Duplicate"]);
+        assert_eq!(more(XLS), ["Compress", "To ODS", "To HTML", "Duplicate"]);
+        assert_eq!(more(ODS), ["Compress", "To HTML", "Duplicate"]);
+        assert_eq!(top(PPTX), ["To PDF", "To images", "Extract images", "Compress", "To text"]);
+        assert_eq!(more(PPTX), ["To ODP", "Duplicate"]);
+        for deck in [PPT, ODP] {
+            assert_eq!(top(deck), ["To PDF", "To PowerPoint", "To images", "Extract images", "Compress"]);
         }
-        assert_eq!(more(ODP), ["Duplicate"]);
+        assert_eq!(more(PPT), ["To text", "To ODP", "Duplicate"]);
+        assert_eq!(more(ODP), ["To text", "Duplicate"]);
         assert_eq!(top(CSV), ["To Excel", "To JSON", "Change delimiter", "To PDF", "Dedupe"]);
         assert_eq!(more(CSV), ["Sort", "Split by rows", "Duplicate"]);
         assert_eq!(top(MARKDOWN), ["To PDF", "To Word", "To HTML", "To image", "To slides"]);

@@ -1,7 +1,7 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence } from "framer-motion";
 import { Monitor, Moon, MousePointerClick, Sun, type LucideIcon } from "lucide-react";
-import { listOperations, pickFiles, runOperation, setMockTools, setShowPlanned, type MockTools, type Operation, type Options } from "./api";
+import { listOperations, onOfficePackChanged, pickFiles, runOperation, setMockTools, setShowPlanned, type MockTools, type Operation, type Options } from "./api";
 import { fileIcon } from "./icons";
 import { LAYOUT_TEST_MIME, SAMPLE_FILES, commonMime, mimeFromFile } from "./mockFiles";
 import { usePrompt } from "./components/CropDialog";
@@ -36,6 +36,7 @@ const TOOLS: { key: keyof MockTools; label: string }[] = [
   { key: "pandoc", label: "pandoc" },
   { key: "typst", label: "typst" },
   { key: "pdfium", label: "pdfium" },
+  { key: "office", label: "Office pack" },
 ];
 
 /**
@@ -46,7 +47,7 @@ const TOOLS: { key: keyof MockTools; label: string }[] = [
 export default function Playground() {
   const [types, setTypes] = useState<string[]>([SAMPLE_FILES[0].label]);
   const [copies, setCopies] = useState("1");
-  const [tools, setTools] = useState<MockTools>({ pandoc: true, typst: true, pdfium: true });
+  const [tools, setTools] = useState<MockTools>({ pandoc: true, typst: true, pdfium: true, office: false });
   const [planned, setPlanned] = useState(false);
   const [menu, setMenu] = useState<OpenMenu | null>(null);
   const [log, setLog] = useState<string[]>([]);
@@ -69,6 +70,13 @@ export default function Playground() {
       return isTest(label) ? [label] : [...cur.filter((l) => !isTest(l)), label];
     });
   };
+
+  // The consent dialog's (mock) download flips the Office pack switch on.
+  useEffect(() => {
+    let off: (() => void) | undefined;
+    void onOfficePackChanged((s) => setTools((t) => ({ ...t, office: s.state === "installed" }))).then((f) => (off = f));
+    return () => off?.();
+  }, []);
 
   const toggleTool = (key: keyof MockTools) => {
     const next = { ...tools, [key]: !tools[key] };

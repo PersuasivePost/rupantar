@@ -12,6 +12,7 @@ pub mod catalog;
 pub mod copy;
 pub mod documents;
 pub mod images;
+pub mod libreoffice;
 mod metadata;
 pub mod mime;
 pub mod office;
@@ -35,6 +36,9 @@ pub enum EngineError {
     ToolMissing(String),
     #[error("{tool} failed ({status}): {stderr}")]
     ToolFailed { tool: String, status: String, stderr: String },
+    /// The operation needs an optional download (`Operation::pack`) that isn't installed.
+    #[error("this needs the {0} pack, which is not installed")]
+    PackMissing(String),
     #[error("{tool} did not finish within {} s and was stopped", .timeout.as_secs())]
     ToolTimeout { tool: String, timeout: Duration },
     #[error("image error: {0}")]
@@ -81,6 +85,10 @@ pub struct Operation {
     /// operations are offered for single-file selections only.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prompt: Option<String>,
+    /// The optional download this needs (`"office"`: LibreOffice). With `available: false` the
+    /// menu still shows it (under More, as "needs Office pack") and offers the download.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pack: Option<String>,
 }
 
 fn yes() -> bool {
@@ -98,6 +106,7 @@ impl Operation {
             priority: None,
             group: None,
             prompt: None,
+            pack: None,
         }
     }
 
@@ -115,6 +124,11 @@ impl Operation {
         self.prompt = Some(prompt.into());
         self
     }
+
+    pub fn needs_pack(mut self, pack: &str) -> Self {
+        self.pack = Some(pack.into());
+        self
+    }
 }
 
 pub type Options = HashMap<String, String>;
@@ -128,13 +142,22 @@ pub struct EngineConfig {
     /// The pdfium shared library file (`libpdfium.so` / `libpdfium.dylib` / `pdfium.dll`),
     /// loaded on first use to render PDF pages.
     pub pdfium_path: Option<PathBuf>,
+    /// LibreOffice's `soffice` program from the installed Office pack. Never looked up on PATH:
+    /// the shell sets it from the pack, so the version is the pinned one.
+    pub soffice_path: Option<PathBuf>,
     /// Upper bound for one external tool run; the process is killed after this.
     pub tool_timeout: Duration,
 }
 
 impl Default for EngineConfig {
     fn default() -> Self {
-        Self { pandoc_path: None, typst_path: None, pdfium_path: None, tool_timeout: Duration::from_secs(120) }
+        Self {
+            pandoc_path: None,
+            typst_path: None,
+            pdfium_path: None,
+            soffice_path: None,
+            tool_timeout: Duration::from_secs(120),
+        }
     }
 }
 
@@ -173,7 +196,7 @@ pub struct Registry {
 }
 
 /// The operations of `a` that `b` also offers (by id, recursively); a parent whose children
-/// all drop out goes too. Available only if available in both.
+/// all drop out goes too. Available only if available in both; a pack either needs is kept.
 fn intersect(a: Vec<Operation>, b: &[Operation]) -> Vec<Operation> {
     a.into_iter()
         .filter_map(|op| {
@@ -184,7 +207,8 @@ fn intersect(a: Vec<Operation>, b: &[Operation]) -> Vec<Operation> {
             if had_children && children.is_empty() {
                 return None;
             }
-            Some(Operation { children, available, ..op })
+            let pack = op.pack.clone().or_else(|| other.pack.clone());
+            Some(Operation { children, available, pack, ..op })
         })
         .collect()
 }
@@ -202,6 +226,9 @@ impl Registry {
     /// Registry with every built-in converter, using the tools in `config`.
     pub fn with_config(config: &EngineConfig) -> Self {
         let mut r = Self::new();
+        // First: it takes over DOCX -> PDF / ODT from pandoc once installed, and owns
+        // `sheet.to_xlsx` for workbooks (the sheet converter's is CSV only).
+        r.register(Box::new(libreoffice::LibreOfficeConverter::new(config)));
         r.register(Box::new(images::ImageConverter));
         r.register(Box::new(sheets::SheetConverter));
         r.register(Box::new(pdf::PdfConverter::new(config)));
@@ -229,6 +256,13 @@ impl Registry {
                 Operation { priority: Some(entry.priority), ..op }
             })
             .collect();
+        // Two converters may implement one id (DOCX -> PDF: LibreOffice, else pandoc); the first wins.
+        let mut seen: Vec<String> = ops.iter().map(|o| o.id.clone()).collect();
+        implemented.retain(|o| {
+            let new = !seen.contains(&o.id);
+            seen.push(o.id.clone());
+            new
+        });
         ops.append(&mut implemented); // types without a menu (tests keep the others complete)
         by_priority(&mut ops);
         ops
@@ -423,7 +457,8 @@ mod tests {
         Registry::with_config(&EngineConfig {
             pandoc_path: Some(exe.clone()),
             typst_path: Some(exe.clone()),
-            pdfium_path: Some(exe),
+            pdfium_path: Some(exe.clone()),
+            soffice_path: Some(exe),
             ..EngineConfig::default()
         })
     }
@@ -478,9 +513,12 @@ mod tests {
             ["doc.to_pdf", "doc.to_docx", "doc.to_html", "doc.to_slides", "doc.to_epub", "copy"]
         );
         assert_eq!(visible(&r.operations(mime::HTML)), ["doc.to_pdf", "doc.to_docx", "doc.to_md", "copy"]);
-        for m in [mime::PPTX, mime::PPT, mime::ODP, mime::DOC, mime::ODT] {
-            assert_eq!(visible(&r.operations(m)), ["copy"], "{m}: nothing implemented yet");
-        }
+        // LibreOffice ("present" here) handles the rest of the Office formats.
+        assert_eq!(visible(&r.operations(mime::PPTX)), ["slides.to_pdf", "slides.to_images", "slides.to_odp", "copy"]);
+        assert_eq!(visible(&r.operations(mime::PPT)), ["slides.to_pdf", "slides.to_pptx", "slides.to_images", "slides.to_odp", "copy"]);
+        assert_eq!(visible(&r.operations(mime::DOC)), ["doc.to_pdf", "doc.to_docx", "doc.to_odt", "copy"]);
+        assert_eq!(visible(&r.operations(mime::ODT)), ["doc.to_pdf", "doc.to_docx", "copy"]);
+        assert_eq!(visible(&r.operations(mime::XLS)), ["sheet.to_csv", "sheet.to_xlsx", "sheet.to_pdf", "sheet.to_json", "sheet.split", "sheet.to_ods", "sheet.to_html", "copy"]);
         let planned = r.operations(mime::PDF).into_iter().find(|o| o.id == "pdf.ocr").unwrap();
         assert!(!planned.available && planned.children.is_empty());
         // Types without a menu get the converters' operations as they are.
@@ -543,6 +581,30 @@ mod tests {
         let docs = r.operations_for(&mimes(&[mime::DOCX, mime::MARKDOWN]));
         assert_eq!(ids(&docs), ["doc.to_pdf", "doc.to_html", "doc.to_epub", "doc.to_text", "copy"]);
         assert_eq!(docs.iter().map(|o| o.available).collect::<Vec<_>>(), [true, false, true, false, true]);
+    }
+
+    #[test]
+    fn office_pack_ops_are_flagged_and_carried_through_selections() {
+        let r = Registry::with_defaults(); // no LibreOffice
+        let pack = |ops: &[Operation], id: &str| ops.iter().find(|o| o.id == id).map(|o| (o.available, o.pack.clone()));
+        let doc = r.operations(mime::DOC);
+        assert_eq!(pack(&doc, "doc.to_pdf"), Some((false, Some("office".into()))));
+        // DOCX -> PDF is pandoc's without the pack (not flagged); with a DOC it needs the pack.
+        let docx = r.operations(mime::DOCX);
+        assert_eq!(pack(&docx, "doc.to_pdf"), Some((false, None)), "pandoc/typst missing too");
+        let mixed = r.operations_for(&mimes(&[mime::DOCX, mime::DOC]));
+        assert_eq!(pack(&mixed, "doc.to_pdf"), Some((false, Some("office".into()))));
+        assert_eq!(ids(&docx).iter().filter(|id| **id == "doc.to_pdf").count(), 1, "listed once");
+
+        let d = tempfile::tempdir().unwrap();
+        let (a, b) = (d.path().join("a.docx"), d.path().join("b.doc"));
+        std::fs::write(&a, b"x").unwrap();
+        std::fs::write(&b, b"x").unwrap();
+        let op = Operation::new("doc.to_pdf", "", "");
+        let err = r.run_for(&mimes(&[mime::DOCX]), &op, &[a], &Options::new()).unwrap_err();
+        assert!(matches!(err, EngineError::ToolMissing(_)), "falls through to pandoc: {err}");
+        let err = r.run_for(&mimes(&[mime::DOC]), &op, &[b], &Options::new()).unwrap_err();
+        assert!(matches!(err, EngineError::PackMissing(_)), "{err}");
     }
 
     #[test]
