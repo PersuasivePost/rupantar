@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Tauri system libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev \
+            librsvg2-dev libsoup-3.0-dev libxdo-dev patchelf
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # The sidecars let the pandoc/typst tests run instead of skipping; pdfium does the same for
+      # the render tests. The Tauri build script also insists on them being there.
+      - name: Fetch sidecars and pdfium
+        run: |
+          scripts/fetch-sidecars.sh
+          scripts/fetch-pdfium.sh
+
+      - name: Test
+        run: cargo test -p engine -p placement -p packs
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Frontend
+        run: |
+          npm ci
+          npm run build

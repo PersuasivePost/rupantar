@@ -1,0 +1,79 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write # creates the draft release and uploads the installers
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  release:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            rust_targets: x86_64-pc-windows-msvc
+          - os: macos-latest
+            # Universal: one app that runs on Apple silicon and Intel.
+            target: universal-apple-darwin
+            rust_targets: aarch64-apple-darwin,x86_64-apple-darwin
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            rust_targets: x86_64-unknown-linux-gnu
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Tauri system libraries (Linux)
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev \
+            librsvg2-dev libsoup-3.0-dev libxdo-dev patchelf
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_targets }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+          key: ${{ matrix.target }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # `bundle.externalBin` and `bundle.resources` make the build fail without these.
+      - name: Fetch sidecars and pdfium
+        run: |
+          if [[ "${{ matrix.target }}" == universal-apple-darwin ]]; then
+            scripts/fetch-universal-macos.sh
+          else
+            scripts/fetch-sidecars.sh "${{ matrix.target }}"
+            scripts/fetch-pdfium.sh "${{ matrix.target }}"
+          fi
+
+      - run: npm ci
+
+      # The Office and AI packs are not bundled: the app downloads them after the user agrees.
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: Rupantar ${{ github.ref_name }}
+          releaseBody: "See the README for install notes. macOS builds are unsigned: right-click → Open the first time."
+          releaseDraft: true
+          prerelease: false
+          args: --target ${{ matrix.target }}
