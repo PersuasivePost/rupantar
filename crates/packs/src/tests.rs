@@ -629,3 +629,19 @@ fn installs_the_real_ai_pack() {
         fs::rename(pack.dir(), &keep).unwrap();
     }
 }
+
+#[test]
+fn sweep_finishes_a_pending_removal_and_only_that() {
+    let dir = tempfile::tempdir().unwrap();
+    let pack = Pack::ai(dir.path());
+    fs::create_dir_all(pack.dir().join("ai-1/onnxruntime")).unwrap();
+    fs::write(pack.dir().join("ai-1/onnxruntime/lib"), b"x").unwrap();
+
+    pack.sweep(); // no marker: a partial download or an install must be left alone
+    assert!(pack.dir().join("ai-1").exists());
+
+    fs::write(pack.dir().join("remove-pending"), b"").unwrap();
+    pack.sweep();
+    assert!(!pack.dir().exists());
+    pack.sweep(); // nothing left is fine
+}

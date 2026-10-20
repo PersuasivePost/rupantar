@@ -76,13 +76,16 @@ export const PAGE_ID = "menu.page";
 /**
  * The inner ring for a (visible, ordered) operation list. Operations marked `more` (Duplicate,
  * Office-pack ops waiting for the pack) never take a wedge from the others: they go last under
- * "More". When nothing else is left they are the wedges themselves, rather than a lone "More".
+ * "More". When nothing else is left they are the wedges themselves, rather than a lone "More";
+ * a lone Duplicate takes the sixth wedge when there is room (so no "More" for e.g. HTML).
  */
 export function menuWedges(ops: Operation[]): Operation[] {
   let ready = ops.filter((o) => !o.more);
   let later = ops.filter((o) => o.more);
   if (!ready.length) [ready, later] = [later, []];
   if (!later.length && ready.length <= MAX_WEDGES) return ready;
+  // "More" holding only Duplicate would be a wasted click: Duplicate takes the free wedge instead.
+  if (later.length === 1 && later[0].id === "copy" && ready.length < MAX_WEDGES) return [...ready, ...later];
   const top = ready.slice(0, MAX_WEDGES - 1);
   return [...top, { id: MORE_ID, label: "More", icon: "Ellipsis", children: [...ready.slice(MAX_WEDGES - 1), ...later] }];
 }

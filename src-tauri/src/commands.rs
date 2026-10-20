@@ -10,6 +10,7 @@ use engine::{EngineConfig, EngineError, Job, Operation, Options, Registry};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 
+use crate::notify;
 use crate::settings::{self, Settings};
 use crate::shell::{self, Shell, Summon};
 
@@ -79,6 +80,8 @@ pub async fn run_operation(
     run_id: Option<String>,
 ) -> Result<Vec<PathBuf>, String> {
     let registry = engine.current();
+    let notifier = app.clone();
+    let label = op.label.clone();
     let job = Arc::new(match run_id.clone() {
         Some(id) => {
             let last = Mutex::new(None::<Instant>);
@@ -113,9 +116,15 @@ pub async fn run_operation(
         runs.0.lock().unwrap().remove(id);
     }
     match result.map_err(|e| e.to_string())? {
-        Ok(outputs) => Ok(outputs),
+        Ok(outputs) => {
+            notify::succeeded(&notifier, &label, &outputs);
+            Ok(outputs)
+        }
         Err(EngineError::Cancelled) => Err("cancelled".into()),
-        Err(e) => Err(e.to_string()),
+        Err(e) => {
+            notify::failed(&notifier, &label, &e.to_string());
+            Err(e.to_string())
+        }
     }
 }
 

@@ -595,6 +595,8 @@ impl Pack {
     pub fn install(&self, build: &Build, progress: &mut dyn FnMut(Progress), cancel: &AtomicBool) -> Result<BTreeMap<String, PathBuf>> {
         let total = build.size();
         fs::create_dir_all(self.dir.join("download"))?;
+        // Installing again supersedes a removal that was waiting for a restart.
+        let _ = fs::remove_file(self.dir.join(REMOVE_PENDING));
 
         let mut offset = 0;
         for c in build.components {
@@ -690,18 +692,38 @@ impl Pack {
     }
 
     /// Removes everything: the installed tree, partial downloads, the marker (first, so a
-    /// half-removed pack never counts as installed).
+    /// half-removed pack never counts as installed). A file that is still loaded by this process (ONNX Runtime's library,
+    /// after a background removal; Windows won't delete a loaded DLL) cannot be deleted now: the
+    /// pack then counts as removed anyway and what is left is deleted by `sweep` at the next start.
     pub fn remove(&self) -> Result<()> {
         match fs::remove_file(self.dir.join("installed.json")) {
             Err(e) if e.kind() != io::ErrorKind::NotFound => return Err(e.into()),
             _ => {}
         }
         match fs::remove_dir_all(&self.dir) {
-            Err(e) if e.kind() != io::ErrorKind::NotFound => Err(e.into()),
-            _ => Ok(()),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
+            Err(e) => {
+                // Everything that could be deleted is gone; mark the rest. If even the marker
+                // can't be written, report the original failure.
+                fs::write(self.dir.join(REMOVE_PENDING), b"").map_err(|_| e)?;
+                Ok(())
+            }
+            Ok(()) => Ok(()),
+        }
+    }
+
+    /// Finishes a removal that `remove` could not (call at startup, before anything is loaded).
+    /// Does nothing unless a removal was left pending; a failure just leaves it for next time.
+    pub fn sweep(&self) {
+        if self.dir.join(REMOVE_PENDING).exists() && fs::remove_dir_all(&self.dir).is_err() {
+            // Keep the marker if it survived, so the next start tries again.
+            let _ = fs::write(self.dir.join(REMOVE_PENDING), b"");
         }
     }
 }
+
+/// Written into a pack's directory when its removal could not finish (see `Pack::remove`).
+const REMOVE_PENDING: &str = "remove-pending";
 
 fn check(cancel: &AtomicBool) -> Result<()> {
     if cancel.load(Ordering::Relaxed) {

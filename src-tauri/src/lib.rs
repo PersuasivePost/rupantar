@@ -1,6 +1,7 @@
 //! Thin Tauri shell: tray, global shortcut, windows. Conversion logic lives in `engine`.
 
 mod commands;
+mod notify;
 mod packs;
 mod settings;
 mod shell;
@@ -21,6 +22,7 @@ pub fn run() {
             shell::summon(app, files);
         }))
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, Some(vec!["--hidden"])))
         .invoke_handler(tauri::generate_handler![
             commands::list_operations,
@@ -48,10 +50,13 @@ pub fn run() {
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
 
             app.handle().plugin(tauri_plugin_global_shortcut::Builder::new().build())?;
+            packs::sweep(app.handle());
             app.manage(shell::Shell::new());
             app.manage(commands::Engine::new(shell::engine_config(app.handle())));
             app.manage(commands::Runs::default());
             app.manage(packs::PackJobs::default());
+            app.manage(notify::LastResult::default());
+            notify::init(app.handle());
 
             let handle = app.handle();
             let saved = settings::load(handle);

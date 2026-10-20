@@ -80,6 +80,16 @@ fn pack(app: &AppHandle, kind: Kind) -> Option<Pack> {
     })
 }
 
+/// Finishes pack removals that could not complete while the app was running (a loaded DLL on
+/// Windows). Call at startup, before any pack library is loaded.
+pub fn sweep(app: &AppHandle) {
+    for kind in [Kind::Office, Kind::Ai] {
+        if let Some(p) = pack(app, kind) {
+            p.sweep();
+        }
+    }
+}
+
 /// Points `config` at whatever packs are installed (or at nothing, for removed ones).
 pub fn apply(app: &AppHandle, config: &mut engine::EngineConfig) {
     config.soffice_path = pack(app, Kind::Office).and_then(|p| p.program());
@@ -226,7 +236,8 @@ pub fn cancel_pack(jobs: State<PackJobs>, pack: String) -> Result<(), String> {
 }
 
 /// Removes a pack. On Windows a library the app already loaded (ONNX Runtime, after a
-/// background removal) can't be deleted until Rupantar restarts; that error is passed on.
+/// background removal) can't be deleted until Rupantar restarts: the pack then counts as
+/// removed and the rest is deleted at the next start (`sweep`).
 #[tauri::command]
 pub async fn remove_pack(app: AppHandle, jobs: State<'_, PackJobs>, engine: State<'_, Engine>, pack: String) -> Result<PackStatus, String> {
     let kind = Kind::parse(&pack)?;
