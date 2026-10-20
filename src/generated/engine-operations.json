@@ -1168,11 +1168,28 @@
         "prompt": "crop"
       },
       {
-        "available": false,
+        "available": true,
+        "children": [
+          {
+            "available": true,
+            "icon": "Grid2x2",
+            "id": "image.remove_bg.transparent",
+            "label": "Transparent PNG",
+            "pack": "ai"
+          },
+          {
+            "available": true,
+            "icon": "Square",
+            "id": "image.remove_bg.white",
+            "label": "White background",
+            "pack": "ai"
+          }
+        ],
         "group": "edit",
         "icon": "WandSparkles",
         "id": "image.remove_bg",
         "label": "Remove background",
+        "pack": "ai",
         "priority": 50
       },
       {
@@ -1224,11 +1241,28 @@
         "priority": 65
       },
       {
-        "available": false,
+        "available": true,
+        "children": [
+          {
+            "available": true,
+            "icon": "ZoomIn",
+            "id": "image.upscale.2",
+            "label": "2×",
+            "pack": "ai"
+          },
+          {
+            "available": true,
+            "icon": "Scaling",
+            "id": "image.upscale.4",
+            "label": "4×",
+            "pack": "ai"
+          }
+        ],
         "group": "optimize",
         "icon": "ZoomIn",
         "id": "image.upscale",
         "label": "Upscale",
+        "pack": "ai",
         "priority": 70
       },
       {
@@ -1360,11 +1394,28 @@
         "prompt": "crop"
       },
       {
-        "available": false,
+        "available": true,
+        "children": [
+          {
+            "available": true,
+            "icon": "Grid2x2",
+            "id": "image.remove_bg.transparent",
+            "label": "Transparent PNG",
+            "pack": "ai"
+          },
+          {
+            "available": true,
+            "icon": "Square",
+            "id": "image.remove_bg.white",
+            "label": "White background",
+            "pack": "ai"
+          }
+        ],
         "group": "edit",
         "icon": "WandSparkles",
         "id": "image.remove_bg",
         "label": "Remove background",
+        "pack": "ai",
         "priority": 50
       },
       {
@@ -1416,11 +1467,28 @@
         "priority": 65
       },
       {
-        "available": false,
+        "available": true,
+        "children": [
+          {
+            "available": true,
+            "icon": "ZoomIn",
+            "id": "image.upscale.2",
+            "label": "2×",
+            "pack": "ai"
+          },
+          {
+            "available": true,
+            "icon": "Scaling",
+            "id": "image.upscale.4",
+            "label": "4×",
+            "pack": "ai"
+          }
+        ],
         "group": "optimize",
         "icon": "ZoomIn",
         "id": "image.upscale",
         "label": "Upscale",
+        "pack": "ai",
         "priority": 70
       },
       {
@@ -1552,11 +1620,28 @@
         "prompt": "crop"
       },
       {
-        "available": false,
+        "available": true,
+        "children": [
+          {
+            "available": true,
+            "icon": "Grid2x2",
+            "id": "image.remove_bg.transparent",
+            "label": "Transparent PNG",
+            "pack": "ai"
+          },
+          {
+            "available": true,
+            "icon": "Square",
+            "id": "image.remove_bg.white",
+            "label": "White background",
+            "pack": "ai"
+          }
+        ],
         "group": "edit",
         "icon": "WandSparkles",
         "id": "image.remove_bg",
         "label": "Remove background",
+        "pack": "ai",
         "priority": 50
       },
       {
@@ -1608,11 +1693,28 @@
         "priority": 65
       },
       {
-        "available": false,
+        "available": true,
+        "children": [
+          {
+            "available": true,
+            "icon": "ZoomIn",
+            "id": "image.upscale.2",
+            "label": "2×",
+            "pack": "ai"
+          },
+          {
+            "available": true,
+            "icon": "Scaling",
+            "id": "image.upscale.4",
+            "label": "4×",
+            "pack": "ai"
+          }
+        ],
         "group": "optimize",
         "icon": "ZoomIn",
         "id": "image.upscale",
         "label": "Upscale",
+        "pack": "ai",
         "priority": 70
       },
       {

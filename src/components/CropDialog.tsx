@@ -3,7 +3,7 @@ import { motion, useReducedMotion } from "framer-motion";
 import { Crop, X } from "lucide-react";
 import { previewImage, type ImagePreview, type Operation, type Options } from "../api";
 import { needsPack } from "../lib/operations";
-import { OfficePackDialog } from "./OfficePackDialog";
+import { PackDialog } from "./PackDialog";
 
 /** In original-image pixels. */
 interface Rect {
@@ -28,12 +28,13 @@ const clamp = (v: number, lo: number, hi: number) => Math.min(Math.max(v, lo), h
  * installed) or a prompt (`op.prompt`, e.g. `crop`). Render `element` somewhere above the menu.
  */
 export function usePrompt() {
-  const [req, setReq] = useState<{ op: Operation; path: string; name: string; resolve: (o: Options | null) => void } | null>(null);
+  const [req, setReq] = useState<{ op: Operation; parent?: Operation; path: string; name: string; resolve: (o: Options | null) => void } | null>(null);
+  /** `parent`: the operation `op` is a sub-option of, which the download dialog names. */
   const prompt = useCallback(
-    (op: Operation, path: string, name: string) =>
+    (op: Operation, path: string, name: string, parent?: Operation) =>
       new Promise<Options | null>((resolve) => {
         if (!needsPack(op) && op.prompt !== "crop") return resolve(null); // unknown prompt: nothing to ask
-        setReq({ op, path, name, resolve });
+        setReq({ op, parent, path, name, resolve });
       }),
     [],
   );
@@ -45,7 +46,7 @@ export function usePrompt() {
   }, []);
   const onPack = useCallback((installed: boolean) => finish(installed ? {} : null), [finish]);
   const element = req && (needsPack(req.op)
-    ? <OfficePackDialog key={req.op.id} op={req.op} onDone={onPack} />
+    ? <PackDialog key={req.op.id} pack={req.op.pack === "ai" ? "ai" : "office"} op={req.parent ?? req.op} onDone={onPack} />
     : <CropDialog key={req.path} path={req.path} name={req.name} onDone={finish} />);
   /** A download dialog is up: the window must stay while the user switches away. */
   const busy = !!req && needsPack(req.op);

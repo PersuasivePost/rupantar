@@ -1,19 +1,20 @@
 //! Tauri commands: thin wrappers that delegate to `engine` or to `shell`.
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex, RwLock};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
-use engine::{EngineConfig, Operation, Options, Registry};
+use engine::{EngineConfig, EngineError, Job, Operation, Options, Registry};
 use serde::Serialize;
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::settings::{self, Settings};
 use crate::shell::{self, Shell, Summon};
 
-/// The converter registry, built at startup with the tools found then, and rebuilt when the
-/// Office pack is installed or removed. A conversion keeps the registry it started with.
+/// The converter registry, built at startup with the tools found then, and rebuilt when a pack
+/// is installed or removed. A conversion keeps the registry it started with.
 pub struct Engine {
     config: Mutex<EngineConfig>,
     registry: RwLock<Arc<Registry>>,
@@ -29,12 +30,26 @@ impl Engine {
         Arc::clone(&self.registry.read().unwrap())
     }
 
-    /// Points the engine at a newly installed (or removed) LibreOffice.
-    pub fn set_soffice(&self, soffice: Option<PathBuf>) {
+    /// Changes the configuration (e.g. a pack was installed or removed) and rebuilds the registry.
+    pub fn update(&self, change: impl FnOnce(&mut EngineConfig)) {
         let mut config = self.config.lock().unwrap();
-        config.soffice_path = soffice;
+        change(&mut config);
         *self.registry.write().unwrap() = Arc::new(Registry::with_config(&config));
     }
+}
+
+/// Runs in progress that the frontend gave an id, so it can cancel them.
+#[derive(Default)]
+pub struct Runs(Mutex<HashMap<String, Arc<Job>>>);
+
+/// Emitted while a run reports progress (only long ones do, e.g. the AI pack's).
+const RUN_PROGRESS_EVENT: &str = "operation-progress";
+
+#[derive(Debug, Clone, Serialize)]
+struct RunProgress {
+    run_id: String,
+    fraction: f32,
+    label: String,
 }
 
 /// Operations for a selection: `mimes` has one entry per file (see `FileBatch::mimes`).
@@ -48,19 +63,44 @@ pub fn list_operations(engine: State<Engine>, mimes: Vec<String>) -> Vec<Operati
 /// Async + `spawn_blocking`: conversions can take seconds and sync commands run on the main
 /// thread, which would freeze the tray and window. File types are detected again here rather
 /// than trusted from the frontend. Each run is logged with the engine that did it (e.g. DOCX ->
-/// PDF: "LibreOffice" once the Office pack is installed, else "pandoc").
+/// PDF: "LibreOffice" once the Office pack is installed, else "pandoc"; Remove background: "AI
+/// (ONNX Runtime on CPU)").
+///
+/// With a `run_id`, progress is emitted as `operation-progress` (throttled) and
+/// `cancel_operation(run_id)` stops the run; it then rejects with `"cancelled"`.
 #[tauri::command]
 pub async fn run_operation(
+    app: AppHandle,
     engine: State<'_, Engine>,
+    runs: State<'_, Runs>,
     op: Operation,
     inputs: Vec<PathBuf>,
     options: Option<Options>,
+    run_id: Option<String>,
 ) -> Result<Vec<PathBuf>, String> {
     let registry = engine.current();
-    tauri::async_runtime::spawn_blocking(move || {
+    let job = Arc::new(match run_id.clone() {
+        Some(id) => {
+            let last = Mutex::new(None::<Instant>);
+            Job::new(move |p| {
+                let mut last = last.lock().unwrap();
+                if p.fraction < 1.0 && last.is_some_and(|at| at.elapsed() < Duration::from_millis(100)) {
+                    return;
+                }
+                *last = Some(Instant::now());
+                let _ = app.emit(RUN_PROGRESS_EVENT, RunProgress { run_id: id.clone(), fraction: p.fraction, label: p.label.clone() });
+            })
+        }
+        None => Job::default(),
+    });
+    if let Some(id) = &run_id {
+        runs.0.lock().unwrap().insert(id.clone(), Arc::clone(&job));
+    }
+    let running = Arc::clone(&job);
+    let result = tauri::async_runtime::spawn_blocking(move || {
         let started = Instant::now();
         let mimes: Vec<String> = inputs.iter().map(|f| engine::mime::detect(f)).collect();
-        let result = registry.run_traced(&mimes, &op, &inputs, &options.unwrap_or_default());
+        let result = registry.run_job(&mimes, &op, &inputs, &options.unwrap_or_default(), &running);
         let secs = started.elapsed().as_secs_f32();
         match &result {
             Ok(run) => eprintln!("rupantar: {} on {} file(s) via {} in {secs:.1} s", op.id, inputs.len(), run.engine),
@@ -68,9 +108,23 @@ pub async fn run_operation(
         }
         result.map(|run| run.outputs)
     })
-    .await
-    .map_err(|e| e.to_string())?
-    .map_err(|e| e.to_string())
+    .await;
+    if let Some(id) = &run_id {
+        runs.0.lock().unwrap().remove(id);
+    }
+    match result.map_err(|e| e.to_string())? {
+        Ok(outputs) => Ok(outputs),
+        Err(EngineError::Cancelled) => Err("cancelled".into()),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+/// Asks the run started with `run_id` to stop (a no-op once it has finished).
+#[tauri::command]
+pub fn cancel_operation(runs: State<Runs>, run_id: String) {
+    if let Some(job) = runs.0.lock().unwrap().get(&run_id) {
+        job.cancel();
+    }
 }
 
 /// A downscaled image for the crop dialog; `width`/`height` are the original's (crop options

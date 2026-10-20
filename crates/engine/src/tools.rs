@@ -10,10 +10,11 @@ use std::ffi::OsStr;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
+use std::sync::mpsc::{self, RecvTimeoutError};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crate::{EngineError, Result};
+use crate::{EngineError, Job, Result};
 
 /// Nothing listens on the discard port, so connections are refused immediately.
 const DEAD_PROXY: &str = "http://127.0.0.1:9";
@@ -64,6 +65,24 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
 {
+    run_job(tool, program, args, cwd, timeout, &Job::default(), &mut |_| {})
+}
+
+/// [`run`] that also hands each stderr line to `on_line` as it arrives (progress output) and
+/// kills the tool as soon as `job` is cancelled (`EngineError::Cancelled`).
+pub fn run_job<I, S>(
+    tool: &str,
+    program: &Path,
+    args: I,
+    cwd: Option<&Path>,
+    timeout: Duration,
+    job: &Job,
+    on_line: &mut dyn FnMut(&str),
+) -> Result<String>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<OsStr>,
+{
     let mut cmd = Command::new(program);
     cmd.args(args).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::piped());
     if let Some(dir) = cwd {
@@ -80,32 +99,67 @@ where
         cmd.creation_flags(CREATE_NO_WINDOW);
     }
 
+    job.check()?;
     let mut child = cmd.spawn().map_err(|e| match e.kind() {
         std::io::ErrorKind::NotFound => EngineError::ToolMissing(tool.to_string()),
         _ => e.into(),
     })?;
-    // Drain stderr on a thread so a chatty tool can't block on a full pipe.
-    let reader = child.stderr.take().map(|mut pipe| {
+    // Drain stderr on a thread so a chatty tool can't block on a full pipe; chunks come back
+    // here to be split into lines.
+    let (tx, rx) = mpsc::channel::<Vec<u8>>();
+    if let Some(mut pipe) = child.stderr.take() {
         thread::spawn(move || {
-            let mut buf = Vec::new();
-            let _ = pipe.read_to_end(&mut buf);
-            buf
-        })
-    });
+            let mut buf = vec![0u8; 8192];
+            while let Ok(n) = pipe.read(&mut buf) {
+                if n == 0 || tx.send(buf[..n].to_vec()).is_err() {
+                    break;
+                }
+            }
+        });
+    }
 
+    let mut stderr = Vec::new();
+    let mut line_start = 0;
+    let mut take_lines = |stderr: &[u8], line_start: &mut usize, all: bool| {
+        while let Some(i) = stderr[*line_start..].iter().position(|b| *b == b'\n' || *b == b'\r') {
+            on_line(String::from_utf8_lossy(&stderr[*line_start..*line_start + i]).trim());
+            *line_start += i + 1;
+        }
+        if all && *line_start < stderr.len() {
+            on_line(String::from_utf8_lossy(&stderr[*line_start..]).trim());
+            *line_start = stderr.len();
+        }
+    };
     let deadline = Instant::now() + timeout;
     let status = loop {
+        match rx.recv_timeout(Duration::from_millis(15)) {
+            Ok(chunk) => {
+                stderr.extend_from_slice(&chunk);
+                take_lines(&stderr, &mut line_start, false);
+            }
+            Err(RecvTimeoutError::Timeout | RecvTimeoutError::Disconnected) => {}
+        }
         if let Some(status) = child.try_wait()? {
             break status;
         }
-        if Instant::now() >= deadline {
+        let stop = if job.is_cancelled() {
+            Some(EngineError::Cancelled)
+        } else if Instant::now() >= deadline {
+            Some(EngineError::ToolTimeout { tool: tool.to_string(), timeout })
+        } else {
+            None
+        };
+        if let Some(err) = stop {
             let _ = child.kill();
             let _ = child.wait();
-            return Err(EngineError::ToolTimeout { tool: tool.to_string(), timeout });
+            return Err(err);
         }
-        thread::sleep(Duration::from_millis(15));
     };
-    let stderr = reader.and_then(|r| r.join().ok()).unwrap_or_default();
+    // The rest of stderr, until the reader thread sees the pipe close.
+    while let Ok(chunk) = rx.recv_timeout(Duration::from_secs(2)) {
+        stderr.extend_from_slice(&chunk);
+    }
+    take_lines(&stderr, &mut line_start, true);
     let stderr = String::from_utf8_lossy(&stderr).into_owned();
     if status.success() {
         Ok(stderr)
@@ -213,6 +267,27 @@ mod tests {
         fn network_is_routed_to_a_dead_proxy() {
             let out = sh("echo \"$https_proxy $HTTP_PROXY ${no_proxy-unset}\" >&2", Duration::from_secs(5)).unwrap();
             assert_eq!(out.trim(), format!("{DEAD_PROXY} {DEAD_PROXY} unset"));
+        }
+
+        #[test]
+        fn lines_stream_and_cancel_kills_the_tool() {
+            let job = Job::default();
+            let started = Instant::now();
+            let mut lines = Vec::new();
+            let err = run_job("sh", Path::new("/bin/sh"), ["-c", "printf '0.00%%\\n25.00%%\\r' >&2; sleep 5"], None, Duration::from_secs(10), &job, &mut |l| {
+                lines.push(l.to_string());
+                if l == "25.00%" {
+                    job.cancel();
+                }
+            })
+            .unwrap_err();
+            assert!(matches!(err, EngineError::Cancelled), "{err}");
+            assert_eq!(lines, ["0.00%", "25.00%"]);
+            assert!(started.elapsed() < Duration::from_secs(3), "killed, not waited for");
+
+            let mut lines = Vec::new();
+            let out = run_job("sh", Path::new("/bin/sh"), ["-c", "echo a >&2; printf b >&2"], None, Duration::from_secs(5), &Job::default(), &mut |l| lines.push(l.to_string())).unwrap();
+            assert_eq!((out.as_str(), lines), ("a\nb", vec!["a".to_string(), "b".to_string()]), "a last line without a newline too");
         }
 
         #[test]

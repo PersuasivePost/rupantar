@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
-import { ArrowLeft, ChevronRight, FileText, Keyboard, Package, Power, Scale } from "lucide-react";
-import { getSettings, setAutostart, setShortcut, thirdPartyNotices, type Notice, type Settings as SettingsData } from "./api";
+import { ArrowLeft, ChevronRight, FileText, Keyboard, Package, Power, Scale, WandSparkles } from "lucide-react";
+import { getSettings, setAutostart, setShortcut, thirdPartyNotices, type Notice, type PackId, type Settings as SettingsData } from "./api";
 import { THIRD_PARTY, type ThirdParty } from "./licenses";
-import { formatBytes, progressFraction, progressLabel, useOfficePack } from "./lib/useOfficePack";
+import { PACK_INFO, formatBytes, progressFraction, progressLabel, usePack } from "./lib/usePack";
 
 const panel = { background: "var(--panel)", borderColor: "var(--panel-border)" };
 const button = "rounded-lg px-3 py-1.5 text-sm font-medium";
@@ -128,7 +128,8 @@ function General({ onLicenses }: { onLicenses: () => void }) {
 
       {error && <p role="alert" className="text-sm" style={{ color: "#f87171" }}>{error}</p>}
 
-      <OfficePack />
+      <PackSection pack="office" />
+      <PackSection pack="ai" />
 
       <button onClick={onLicenses} className="flex items-center gap-2 rounded-xl border p-4 text-left text-sm font-medium" style={panel}>
         <Scale size={16} /> <span className="flex-1">Open-source licenses</span> <ChevronRight size={16} />
@@ -137,22 +138,21 @@ function General({ onLicenses }: { onLicenses: () => void }) {
   );
 }
 
-/** Settings → Office pack: what it is, its size, download / cancel / remove, progress. */
-function OfficePack() {
-  const { status, progress, error, removing, install, cancel, remove } = useOfficePack();
+/** Settings → a pack (Office, AI): what it is, its size, download / cancel / remove, progress. */
+function PackSection({ pack }: { pack: PackId }) {
+  const { status, progress, error, removing, install, cancel, remove } = usePack(pack);
   const offer = status?.offer;
+  const info = PACK_INFO[pack];
+  const Icon = pack === "ai" ? WandSparkles : Package;
   return (
     <section className="flex flex-col gap-3 rounded-xl border p-4 text-sm" style={panel}>
-      <div className="flex items-center gap-2 font-medium"><Package size={16} /> Office pack</div>
-      <p style={{ color: "var(--text-dim)" }}>
-        LibreOffice, for Word, Excel and PowerPoint conversions (to PDF, between formats, slides to images). Optional, and
-        downloaded from documentfoundation.org only when you ask. Conversions stay on this computer.
-      </p>
+      <div className="flex items-center gap-2 font-medium"><Icon size={16} /> {info.name}</div>
+      <p style={{ color: "var(--text-dim)" }}>{info.about(offer?.source ?? (pack === "ai" ? "github.com" : "documentfoundation.org"))}</p>
       {!status && <p style={{ color: "var(--text-dim)" }}>Checking…</p>}
       {status?.state === "unsupported" && <p>Not available for this system.</p>}
       {status?.state === "installed" && status.installed && (
         <div className="flex items-center justify-between gap-3">
-          <span>LibreOffice {status.installed.version} · {formatBytes(status.installed.size)} on disk</span>
+          <span>{info.installed(status.installed.version)} · {formatBytes(status.installed.size)} on disk</span>
           <button className={button} style={secondary} disabled={removing} onClick={() => void remove()}>
             {removing ? "Removing…" : "Remove"}
           </button>
@@ -161,7 +161,7 @@ function OfficePack() {
       {status?.state === "not_installed" && offer && (
         <div className="flex items-center justify-between gap-3">
           <span className="tabular-nums" style={{ color: "var(--text-dim)" }}>
-            LibreOffice {offer.version} · {formatBytes(offer.download_bytes)} download, about {formatBytes(offer.installed_bytes)} on disk
+            {info.installed(offer.version)} · {formatBytes(offer.download_bytes)} download, about {formatBytes(offer.installed_bytes)} on disk
             {offer.downloaded_bytes > 0 && ` (${formatBytes(offer.downloaded_bytes)} already downloaded)`}
           </span>
           <button className={button} style={primary} onClick={() => void install()}>
@@ -181,7 +181,7 @@ function OfficePack() {
         </div>
       )}
       {offer && !offer.tested && status?.state !== "installed" && (
-        <p style={{ color: "#f59e0b" }}>The Office pack hasn’t been tested on this platform yet.</p>
+        <p style={{ color: "#f59e0b" }}>The {info.name} hasn’t been tested on this platform yet.</p>
       )}
       {error && <p role="alert" style={{ color: "#f87171" }}>{error}</p>}
     </section>
@@ -224,7 +224,7 @@ function LicenseCard({ item }: { item: ThirdParty }) {
       )}
       {notices?.length === 0 && (
         <p className="text-xs" style={{ color: "var(--text-dim)" }}>
-          {item.notices === "office" ? "Install the Office pack to see its notice files." : "No notice files found."}
+          {item.notices === "pdfium" ? "No notice files found." : `Install the ${PACK_INFO[item.notices!].name} to see its notice files.`}
         </p>
       )}
       {notices?.map((n) => <LicenseText key={n.name} title={n.name} text={n.text} />)}

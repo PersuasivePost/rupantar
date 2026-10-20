@@ -23,8 +23,8 @@ export interface Operation {
   /** The UI asks for options first (`crop`: a rectangle). Only offered for one file. */
   prompt?: string;
   /**
-   * An optional download this needs (`office`: LibreOffice). With `available: false` the menu
-   * still shows it, and choosing it offers the download.
+   * An optional download this needs (`office`: LibreOffice; `ai`: the AI pack). With
+   * `available: false` the menu still shows it, and choosing it offers the download.
    */
   pack?: string;
   /** Always under "More", never a top wedge (Duplicate; Office-pack ops while the pack is missing). */
@@ -39,11 +39,44 @@ export async function listOperations(mimes: string[]): Promise<Operation[]> {
   return operationsFor(mimes, mockOperations, mockBatchOperations);
 }
 
-/** Resolves to the paths of the files written next to the inputs. Rust detects each input's type. */
-export async function runOperation(op: Operation, inputs: string[], options: Options = {}): Promise<string[]> {
-  if (isTauri()) return invoke<string[]>("run_operation", { op, inputs, options });
-  await new Promise((r) => setTimeout(r, 400));
-  return inputs.map((p) => p.replace(/(\.[^./]+)?$/, ` (${op.id})$1`));
+/** How far a long run has got (only some operations report it, e.g. the AI pack's). */
+export interface RunProgress {
+  /** 0..1. */
+  fraction: number;
+  /** What it is doing, e.g. "Removing background on the CPU…". */
+  label: string;
+}
+
+export interface RunControl {
+  onProgress?: (p: RunProgress) => void;
+  /** Aborting cancels the run, which then rejects with `RUN_CANCELLED`. */
+  signal?: AbortSignal;
+}
+
+/** Rejection message of a run the user cancelled. */
+export const RUN_CANCELLED = "cancelled";
+
+/**
+ * Resolves to the paths of the files written next to the inputs. Rust detects each input's type.
+ * Long runs report progress through `control.onProgress` and stop when `control.signal` aborts.
+ */
+export async function runOperation(op: Operation, inputs: string[], options: Options = {}, control: RunControl = {}): Promise<string[]> {
+  if (!isTauri()) return mockRun(op, inputs, control);
+  const runId = crypto.randomUUID();
+  const { onProgress, signal } = control;
+  const off = onProgress
+    ? await listen<RunProgress & { run_id: string }>("operation-progress", (e) => {
+      if (e.payload.run_id === runId) onProgress({ fraction: e.payload.fraction, label: e.payload.label });
+    })
+    : undefined;
+  const cancel = () => void invoke("cancel_operation", { runId });
+  signal?.addEventListener("abort", cancel);
+  try {
+    return await invoke<string[]>("run_operation", { op, inputs, options, runId });
+  } finally {
+    off?.();
+    signal?.removeEventListener("abort", cancel);
+  }
 }
 
 /** A downscaled image for picking a crop rectangle. `width`/`height` are the original's pixels. */
@@ -68,15 +101,17 @@ export interface MockTools {
   pdfium: boolean;
   /** The Office pack (LibreOffice) is installed. */
   office: boolean;
+  /** The AI pack is installed. */
+  ai: boolean;
 }
 
-let mockTools: MockTools = { pandoc: true, typst: true, pdfium: true, office: false };
+let mockTools: MockTools = { pandoc: true, typst: true, pdfium: true, office: false, ai: false };
 
 /** Playground: pretend tools are missing, to see their operations disappear. */
 export function setMockTools(tools: MockTools): void {
-  const changed = tools.office !== mockTools.office;
+  const changed = PACK_IDS.filter((p) => tools[p] !== mockTools[p]);
   mockTools = { ...tools };
-  if (changed) mockPackChanged();
+  changed.forEach(mockPackChanged);
 }
 
 let showPlanned = false;
@@ -134,6 +169,7 @@ function mockOperations(mime: string): Operation[] {
 function withAvailability(ops: Operation[]): Operation[] {
   const needs = (id: string, pack?: string): boolean => {
     if (pack === "office") return !mockTools.office || (id === "slides.to_images" && !mockTools.pdfium);
+    if (pack === "ai") return !mockTools.ai;
     return (id.startsWith("doc.") && !/^doc\.(extract_images|compress)/.test(id) && !mockTools.pandoc) ||
       (/^pdf\.to_(pptx|docx)$/.test(id) && !mockTools.pandoc) ||
       (id === "doc.to_pdf" && !mockTools.typst) ||
@@ -143,6 +179,8 @@ function withAvailability(ops: Operation[]): Operation[] {
   return ops.map((o) => ({
     ...o,
     available: (showPlanned || o.available !== false) && !needs(o.id, o.pack),
+    // Like the engine: Office ops wait under More until their pack is there.
+    ...(o.pack === "office" && !mockTools.office && { more: true }),
     ...(o.children && { children: withAvailability(o.children) }),
   }));
 }
@@ -293,8 +331,12 @@ export async function setAutostart(enabled: boolean): Promise<Settings> {
   return { ...mockSettings };
 }
 
-// ---- Office pack ----------------------------------------------------------------------------
-// LibreOffice, downloaded only after the user agreed (see src-tauri/src/office_pack.rs).
+// ---- Packs --------------------------------------------------------------------------------
+// Optional downloads, only after the user agreed (see src-tauri/src/packs.rs): the Office pack
+// (LibreOffice) and the AI pack (ONNX Runtime + BiRefNet lite, Real-ESRGAN).
+
+export type PackId = "office" | "ai";
+export const PACK_IDS: PackId[] = ["office", "ai"];
 
 export interface PackOffer {
   version: string;
@@ -304,12 +346,14 @@ export interface PackOffer {
   downloaded_bytes: number;
   /** False when this platform's build hasn't been tried on a real machine yet. */
   tested: boolean;
+  /** The sites it downloads from, e.g. "github.com, nuget.org". */
   source: string;
 }
 
 export interface PackStatus {
+  pack: PackId;
   state: "installed" | "installing" | "not_installed" | "unsupported";
-  installed: { version: string; program: string; size: number } | null;
+  installed: { version: string; size: number } | null;
   offer: PackOffer | null;
 }
 
@@ -327,93 +371,115 @@ export interface Notice {
 /** Rejection message when the user cancelled the download. */
 export const PACK_CANCELLED = "cancelled";
 
-export async function officePackStatus(): Promise<PackStatus> {
-  return isTauri() ? invoke<PackStatus>("office_pack_status") : mockPackStatus();
+export async function packStatus(pack: PackId): Promise<PackStatus> {
+  return isTauri() ? invoke<PackStatus>("pack_status", { pack }) : mockPackStatus(pack);
 }
 
 /**
- * Downloads and installs the Office pack. Call it only from a button the user pressed after
- * seeing the size: this is the app's one network access. Rejects with `PACK_CANCELLED` or a
- * readable error.
+ * Downloads and installs a pack. Call it only from a button the user pressed after seeing the
+ * size: this is the app's one network access. Rejects with `PACK_CANCELLED` or a readable error.
  */
-export async function installOfficePack(): Promise<PackStatus> {
-  return isTauri() ? invoke<PackStatus>("install_office_pack") : mockInstall();
+export async function installPack(pack: PackId): Promise<PackStatus> {
+  return isTauri() ? invoke<PackStatus>("install_pack", { pack }) : mockInstall(pack);
 }
 
-export async function cancelOfficePack(): Promise<void> {
-  if (isTauri()) await invoke("cancel_office_pack");
-  else mockCancel = true;
+export async function cancelPack(pack: PackId): Promise<void> {
+  if (isTauri()) await invoke("cancel_pack", { pack });
+  else mockCancel.add(pack);
 }
 
-export async function removeOfficePack(): Promise<PackStatus> {
-  if (isTauri()) return invoke<PackStatus>("remove_office_pack");
-  mockTools = { ...mockTools, office: false };
-  mockDownloaded = 0;
-  mockPackChanged();
-  return mockPackStatus();
+export async function removePack(pack: PackId): Promise<PackStatus> {
+  if (isTauri()) return invoke<PackStatus>("remove_pack", { pack });
+  mockTools = { ...mockTools, [pack]: false };
+  mockDownloaded[pack] = 0;
+  mockPackChanged(pack);
+  return mockPackStatus(pack);
 }
 
-export async function onOfficePackProgress(cb: (p: PackProgress) => void): Promise<Unlisten> {
-  if (isTauri()) return listen<PackProgress>("office-pack-progress", (e) => cb(e.payload));
-  mockProgressListeners.add(cb);
-  return () => void mockProgressListeners.delete(cb);
+export async function onPackProgress(pack: PackId, cb: (p: PackProgress) => void): Promise<Unlisten> {
+  if (isTauri()) {
+    return listen<PackProgress & { pack: PackId }>("pack-progress", (e) => {
+      if (e.payload.pack === pack) cb({ phase: e.payload.phase, done: e.payload.done, total: e.payload.total });
+    });
+  }
+  const listener = (p: PackId, progress: PackProgress) => p === pack && cb(progress);
+  mockProgressListeners.add(listener);
+  return () => void mockProgressListeners.delete(listener);
 }
 
 /** Fires when the pack was installed or removed (from any window). */
-export async function onOfficePackChanged(cb: (s: PackStatus) => void): Promise<Unlisten> {
-  if (isTauri()) return listen<PackStatus>("office-pack-changed", (e) => cb(e.payload));
-  mockChangedListeners.add(cb);
-  return () => void mockChangedListeners.delete(cb);
+export async function onPackChanged(pack: PackId, cb: (s: PackStatus) => void): Promise<Unlisten> {
+  if (isTauri()) return listen<PackStatus>("pack-changed", (e) => e.payload.pack === pack && cb(e.payload));
+  const listener = (s: PackStatus) => s.pack === pack && cb(s);
+  mockChangedListeners.add(listener);
+  return () => void mockChangedListeners.delete(listener);
 }
 
-/** License/notice files shipped with a component: `pdfium` (bundled) or `office` (when installed). */
-export async function thirdPartyNotices(component: "pdfium" | "office"): Promise<Notice[]> {
+/** License/notice files shipped with a component: `pdfium` (bundled) or a pack's (when installed). */
+export async function thirdPartyNotices(component: "pdfium" | PackId): Promise<Notice[]> {
   if (isTauri()) return invoke<Notice[]>("third_party_notices", { component });
   return [{ name: "NOTICE", text: `(${component} notices are read from disk in the desktop app)` }];
 }
 
-// Browser mock: a pretend 217 MB download that takes a few seconds, resumable and cancellable.
-const MOCK_OFFER = { version: "26.2.6", download_bytes: 217_285_735, installed_bytes: 560_000_000, tested: true, source: "documentfoundation.org" };
-let mockInstalling = false;
-let mockCancel = false;
-let mockDownloaded = 0;
-const mockProgressListeners = new Set<(p: PackProgress) => void>();
+// Browser mock: pretend downloads that take a few seconds, resumable and cancellable.
+const MOCK_OFFERS: Record<PackId, Omit<PackOffer, "downloaded_bytes">> = {
+  office: { version: "26.2.6", download_bytes: 217_285_735, installed_bytes: 560_000_000, tested: true, source: "documentfoundation.org" },
+  ai: { version: "1", download_bytes: 280_066_660, installed_bytes: 295_000_000, tested: true, source: "github.com" },
+};
+const mockInstalling = new Set<PackId>();
+const mockCancel = new Set<PackId>();
+const mockDownloaded: Record<PackId, number> = { office: 0, ai: 0 };
+const mockProgressListeners = new Set<(pack: PackId, p: PackProgress) => void>();
 const mockChangedListeners = new Set<(s: PackStatus) => void>();
 
-function mockPackStatus(): PackStatus {
-  const installed = mockTools.office ? { version: MOCK_OFFER.version, program: "soffice", size: 546_000_000 } : null;
-  const state = mockInstalling ? "installing" : installed ? "installed" : "not_installed";
-  return { state, installed, offer: { ...MOCK_OFFER, downloaded_bytes: mockDownloaded } };
+function mockPackStatus(pack: PackId): PackStatus {
+  const offer = MOCK_OFFERS[pack];
+  const installed = mockTools[pack] ? { version: offer.version, size: offer.installed_bytes * 0.97 } : null;
+  const state = mockInstalling.has(pack) ? "installing" : installed ? "installed" : "not_installed";
+  return { pack, state, installed, offer: { ...offer, downloaded_bytes: mockDownloaded[pack] } };
 }
 
-function mockPackChanged(): void {
-  const s = mockPackStatus();
+function mockPackChanged(pack: PackId): void {
+  const s = mockPackStatus(pack);
   mockChangedListeners.forEach((cb) => cb(s));
 }
 
-async function mockInstall(): Promise<PackStatus> {
-  if (mockInstalling) throw "the Office pack is already being downloaded";
-  mockInstalling = true;
-  mockCancel = false;
-  const emit = (p: PackProgress) => mockProgressListeners.forEach((cb) => cb(p));
-  const total = MOCK_OFFER.download_bytes;
+async function mockInstall(pack: PackId): Promise<PackStatus> {
+  if (mockInstalling.has(pack)) throw `the ${pack} pack is already being downloaded`;
+  mockInstalling.add(pack);
+  mockCancel.delete(pack);
+  const emit = (p: PackProgress) => mockProgressListeners.forEach((cb) => cb(pack, p));
+  const total = MOCK_OFFERS[pack].download_bytes;
   try {
     for (const [phase, ms] of [["download", 3200], ["verify", 500], ["extract", 900]] as const) {
-      let done = phase === "download" ? mockDownloaded : 0;
+      let done = phase === "download" ? mockDownloaded[pack] : 0;
       const step = total / (ms / 50);
       while (done < total) {
         await new Promise((r) => setTimeout(r, 50));
-        if (mockCancel) throw PACK_CANCELLED;
+        if (mockCancel.has(pack)) throw PACK_CANCELLED;
         done = Math.min(total, done + step);
-        if (phase === "download") mockDownloaded = done;
+        if (phase === "download") mockDownloaded[pack] = done;
         emit({ phase, done, total });
       }
     }
-    mockTools = { ...mockTools, office: true };
-    mockDownloaded = 0;
+    mockTools = { ...mockTools, [pack]: true };
+    mockDownloaded[pack] = 0;
   } finally {
-    mockInstalling = false;
+    mockInstalling.delete(pack);
   }
-  mockPackChanged();
-  return mockPackStatus();
+  mockPackChanged(pack);
+  return mockPackStatus(pack);
+}
+
+/** Instant for most operations; the AI ones take a few seconds and report progress, like the real ones. */
+async function mockRun(op: Operation, inputs: string[], { onProgress, signal }: RunControl): Promise<string[]> {
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+  const slow = op.id.startsWith("image.remove_bg") ? "Removing background on the CPU…" : op.id.startsWith("image.upscale") ? "Upscaling…" : null;
+  if (!slow) await sleep(400);
+  for (let i = 0; slow && i <= 30; i++) {
+    if (signal?.aborted) throw RUN_CANCELLED;
+    onProgress?.({ fraction: i / 30, label: slow });
+    await sleep(100);
+  }
+  return inputs.map((p) => p.replace(/(\.[^./]+)?$/, ` (${op.id})$1`));
 }

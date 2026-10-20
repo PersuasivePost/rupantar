@@ -1,7 +1,7 @@
 //! Thin Tauri shell: tray, global shortcut, windows. Conversion logic lives in `engine`.
 
 mod commands;
-mod office_pack;
+mod packs;
 mod settings;
 mod shell;
 mod tray;
@@ -25,6 +25,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::list_operations,
             commands::run_operation,
+            commands::cancel_operation,
             commands::preview_image,
             commands::describe_files,
             commands::pick_files,
@@ -34,11 +35,11 @@ pub fn run() {
             commands::get_settings,
             commands::set_shortcut,
             commands::set_autostart,
-            office_pack::office_pack_status,
-            office_pack::install_office_pack,
-            office_pack::cancel_office_pack,
-            office_pack::remove_office_pack,
-            office_pack::third_party_notices,
+            packs::pack_status,
+            packs::install_pack,
+            packs::cancel_pack,
+            packs::remove_pack,
+            packs::third_party_notices,
         ])
         .on_window_event(shell::on_window_event)
         .setup(|app| {
@@ -49,7 +50,8 @@ pub fn run() {
             app.handle().plugin(tauri_plugin_global_shortcut::Builder::new().build())?;
             app.manage(shell::Shell::new());
             app.manage(commands::Engine::new(shell::engine_config(app.handle())));
-            app.manage(office_pack::OfficeJob::default());
+            app.manage(commands::Runs::default());
+            app.manage(packs::PackJobs::default());
 
             let handle = app.handle();
             let saved = settings::load(handle);

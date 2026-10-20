@@ -113,7 +113,7 @@ export default function RadialHost() {
   }, [open]);
 
   // Clicking away dismisses an open menu, but must not cancel the "drop files here" state: the
-  // user is about to drag from another window, which takes focus. Nor the Office pack dialog:
+  // user is about to drag from another window, which takes focus. Nor a pack's download dialog:
   // its download takes a while and the user may well switch windows meanwhile.
   useEffect(() => {
     void setHideOnBlur(state.kind === "menu" && !promptBusy);
@@ -144,11 +144,11 @@ export default function RadialHost() {
           origin={state.origin}
           file={{ name: state.batch.label, mime: state.batch.mime }}
           operations={state.operations}
-          onConfirm={(op, parent, options) =>
-            runOperation(op, state.batch.paths, { ...(parent && { parent: parent.id }), ...options })
+          onConfirm={(op, parent, options, control) =>
+            runOperation(op, state.batch.paths, { ...(parent && { parent: parent.id }), ...options }, control)
           }
           onBrowse={browse}
-          onPrompt={(op) => prompt(op, state.batch.paths[0], state.batch.label)}
+          onPrompt={(op, parent) => prompt(op, state.batch.paths[0], state.batch.label, parent)}
           onDismiss={close}
           onDone={close}
         />

@@ -4,10 +4,11 @@ import {
   type Variants,
 } from "framer-motion";
 import { X, type LucideIcon } from "lucide-react";
-import type { Operation, Options } from "../api";
+import { RUN_CANCELLED, type Operation, type Options, type RunControl, type RunProgress } from "../api";
 import { fileIcon, iconFor } from "../icons";
 import { MORE_ID, RING_SLOTS, menuWedges, needsPack, ringPage, visibleOperations, type Slot } from "../lib/operations";
 import { TAU, angleFromUp, pickInSpan, pickWedge, polar, sectorPath } from "../lib/radial";
+import { PACK_INFO } from "../lib/usePack";
 
 // Geometry (px). Everything is laid out once in a SIZE x SIZE box centered on the cursor;
 // all animation is transform/opacity on those fixed layers.
@@ -59,13 +60,17 @@ export interface RadialMenuProps {
    * those marked `more` (see `menuWedges`).
    */
   operations: Operation[];
-  /** Runs the chosen operation; `parent` is set when it came from the sub ring. */
-  onConfirm: (op: Operation, parent?: Operation, options?: Options) => Promise<unknown>;
   /**
-   * Asks for the options of an operation with a `prompt` (e.g. a crop rectangle); null means
-   * cancelled, which dismisses the menu. Without it, prompted operations just dismiss.
+   * Runs the chosen operation; `parent` is set when it came from the sub ring. Pass `control` on
+   * to `runOperation`: a run that reports progress gets a real progress ring and can be
+   * cancelled (click the disc or Esc), after which it should reject with `RUN_CANCELLED`.
    */
-  onPrompt?: (op: Operation) => Promise<Options | null>;
+  onConfirm: (op: Operation, parent?: Operation, options?: Options, control?: RunControl) => Promise<unknown>;
+  /**
+   * Asks for the options of an operation with a `prompt` (e.g. a crop rectangle) or a missing
+   * pack; null means cancelled, which dismisses the menu. Without it, such operations just dismiss.
+   */
+  onPrompt?: (op: Operation, parent?: Operation) => Promise<Options | null>;
   /**
    * Lets the user add files: double-clicking the center disc or Ctrl/Cmd+O calls this. Without
    * it the disc is just a cancel target.
@@ -106,6 +111,9 @@ export function RadialMenu({ origin, file, operations: all, onConfirm, onPrompt,
   const [page, setPage] = useState(0);
   const [phase, setPhase] = useState<Phase>("choosing");
   const [chosen, setChosen] = useState("");
+  /** Progress the running operation reported, if it does (long ones); it can then be cancelled. */
+  const [live, setLive] = useState<RunProgress | null>(null);
+  const abort = useRef<AbortController | null>(null);
 
   // Handlers read the latest state through a ref so they never act on stale closures.
   const latest = useRef({ hi, sub, expanded, drill, page, phase });
@@ -189,26 +197,43 @@ export function RadialMenu({ origin, file, operations: all, onConfirm, onPrompt,
         // The menu steps aside while the host asks (the crop dialog, or the offer to download
         // a missing pack), then shows progress.
         setPhase("prompt");
-        const picked = onPrompt ? await onPrompt(op) : null;
+        const picked = onPrompt ? await onPrompt(op, parent) : null;
         if (!picked) return onDismiss();
         options = picked;
       }
       setChosen(op.label);
       setPhase("running");
       progress.set(0);
-      const ramp = animate(progress, 0.85, { duration: 2.4, ease: [0.2, 0.8, 0.3, 1] });
+      // A guess, until (unless) the run reports real progress.
+      let ramp = animate(progress, 0.85, { duration: 2.4, ease: [0.2, 0.8, 0.3, 1] });
+      const controller = new AbortController();
+      abort.current = controller;
+      const control: RunControl = {
+        signal: controller.signal,
+        onProgress: (p) => {
+          if (controller.signal.aborted) return;
+          ramp.stop();
+          ramp = animate(progress, p.fraction, { duration: reduced ? 0 : 0.25, ease: "easeOut" });
+          setLive(p);
+        },
+      };
       const later = (fn: () => void, ms: number) => void timers.current.push(window.setTimeout(fn, ms));
       try {
         // Hold the ring on screen long enough to read even when the work is instant.
-        await Promise.all([onConfirm(op, parent, options), sleep(reduced ? 250 : 700)]);
+        await Promise.all([onConfirm(op, parent, options, control), sleep(reduced ? 250 : 700)]);
         ramp.stop();
         await animate(progress, 1, { duration: reduced ? 0.1 : 0.25 });
+        setLive(null);
         setPhase("done");
         later(onDone, reduced ? 500 : 950);
-      } catch {
+      } catch (e) {
         ramp.stop();
+        setLive(null);
+        if (controller.signal.aborted || String(e) === RUN_CANCELLED) return onDismiss(); // the user's choice: no error
         setPhase("error");
         later(onDismiss, 1100);
+      } finally {
+        abort.current = null;
       }
     },
     [onConfirm, onDismiss, onDone, onPrompt, progress, reduced],
@@ -261,8 +286,14 @@ export function RadialMenu({ origin, file, operations: all, onConfirm, onPrompt,
 
   const inDisc = (e: React.MouseEvent) => Math.hypot(e.clientX - center.x, e.clientY - center.y) < R_DISC;
 
+  /** Cancels the running operation, if it reported progress (only those can be stopped). */
+  const cancelRun = useCallback(() => {
+    if (live) abort.current?.abort();
+  }, [live]);
+
   const onClick = (e: React.MouseEvent) => {
     e.stopPropagation(); // the click that confirms must not reach the page underneath and reopen the menu
+    if (latest.current.phase === "running" && inDisc(e)) return cancelRun();
     if (latest.current.phase !== "choosing") return;
     if (onBrowse && inDisc(e)) {
       // A click on the disc dismisses, but only once it is clear no second click follows.
@@ -288,10 +319,12 @@ export function RadialMenu({ origin, file, operations: all, onConfirm, onPrompt,
     setPage(ring.page + Math.sign(e.deltaY));
   };
 
-  // Keyboard: arrows move the highlight, Enter confirms, Esc steps back or dismisses.
+  // Keyboard: arrows move the highlight, Enter confirms, Esc steps back or dismisses (or, while
+  // a long run is going, cancels it).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const { hi: h, sub: s, expanded: exp, drill: dr, page: pg, phase: ph } = latest.current;
+      if (ph === "running" && e.key === "Escape") return cancelRun();
       if (ph !== "choosing") return;
       const dir = e.key === "ArrowRight" || e.key === "ArrowDown" ? 1 : e.key === "ArrowLeft" || e.key === "ArrowUp" ? -1 : 0;
       const ring = ringFor(exp, dr, pg);
@@ -324,7 +357,7 @@ export function RadialMenu({ origin, file, operations: all, onConfirm, onPrompt,
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [activate, expand, n, onBrowse, onDismiss, ringFor]);
+  }, [activate, cancelRun, expand, n, onBrowse, onDismiss, ringFor]);
 
   // ---- variants -----------------------------------------------------------------------------
   // Reduced motion keeps the same states but swaps spring/scale for short opacity fades.
@@ -534,7 +567,10 @@ export function RadialMenu({ origin, file, operations: all, onConfirm, onPrompt,
                     <motion.circle cx="52" cy="52" r="44" stroke={`url(#${uid}-prog)`} style={{ pathLength: progress }} />
                   </g>
                 </svg>
-                <span className="max-w-[60px] truncate text-[10px] font-medium">{chosen}</span>
+                <div className="flex flex-col items-center">
+                  <span className="max-w-[60px] truncate text-[10px] font-medium">{chosen}</span>
+                  {live && <span className="text-[13px] font-semibold tabular-nums">{Math.round(live.fraction * 100)}%</span>}
+                </div>
               </motion.div>
             )}
 
@@ -557,6 +593,26 @@ export function RadialMenu({ origin, file, operations: all, onConfirm, onPrompt,
             )}
           </AnimatePresence>
         </motion.div>
+
+        {/* What a long run is doing, and how to stop it. */}
+        <AnimatePresence>
+          {phase === "running" && live && (
+            <motion.div
+              key="live"
+              className="absolute flex flex-col items-center text-center"
+              style={{ left: C - 110, top: C + R_DISC + 14, width: 220 }}
+              initial={{ opacity: 0, y: reduced ? 0 : -4 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.15 }}
+            >
+              <span className="rounded-full px-2.5 py-1 text-[10px] font-medium" style={{ background: "var(--disc-bg)" }} role="status">
+                {live.label}
+              </span>
+              <span className="mt-1 text-[9px]" style={{ color: "var(--text-dim)" }}>Click or Esc to cancel</span>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         {/* Aim dot: eases toward the cursor's direction so flicks feel anchored. */}
         {!reduced && (
@@ -620,10 +676,10 @@ interface SegmentProps {
 }
 
 /** One wedge. The outer layer owns the bloom/collapse variants; the inner layer owns the highlight scale. */
-/** "needs Office pack" for an operation whose pack isn't installed. */
+/** "needs Office pack" / "needs AI pack" for an operation whose pack isn't installed. */
 function packNote(op: Operation): string | undefined {
   if (!needsPack(op)) return undefined;
-  return op.pack === "office" ? "needs Office pack" : `needs ${op.pack} pack`;
+  return op.pack === "office" || op.pack === "ai" ? PACK_INFO[op.pack].note : `needs ${op.pack} pack`;
 }
 
 function Segment({ uid, variants, custom, path, angle, rMid, maxWidth, label, note, Icon, highlighted, hasChildren, reduced, small }: SegmentProps) {

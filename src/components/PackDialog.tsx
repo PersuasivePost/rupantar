@@ -1,17 +1,18 @@
 import { useEffect } from "react";
 import { motion, useReducedMotion } from "framer-motion";
 import { Download, X } from "lucide-react";
-import type { Operation } from "../api";
-import { formatBytes, progressFraction, progressLabel, useOfficePack } from "../lib/useOfficePack";
+import type { Operation, PackId } from "../api";
+import { PACK_INFO, formatBytes, progressFraction, progressLabel, usePack } from "../lib/usePack";
 
 /**
- * Asks before downloading the Office pack for `op` (the first time an Office operation is
- * chosen), then shows progress. `onDone(true)` once it is installed, so the operation can run;
+ * Asks before downloading the pack `op` needs (the first time one of its operations is chosen),
+ * then shows progress. `onDone(true)` once it is installed, so the operation can run;
  * `onDone(false)` when the user declines or closes.
  */
-export function OfficePackDialog({ op, onDone }: { op: Operation; onDone: (installed: boolean) => void }) {
+export function PackDialog({ pack, op, onDone }: { pack: PackId; op: Operation; onDone: (installed: boolean) => void }) {
   const reduced = !!useReducedMotion();
-  const { status, progress, error, install, cancel } = useOfficePack();
+  const { status, progress, error, install, cancel } = usePack(pack);
+  const info = PACK_INFO[pack];
   const installing = status?.state === "installing";
   const offer = status?.offer;
 
@@ -46,7 +47,7 @@ export function OfficePackDialog({ op, onDone }: { op: Operation; onDone: (insta
       transition={{ duration: reduced ? 0.1 : 0.18 }}
       onClick={(e) => e.stopPropagation()}
       role="dialog"
-      aria-label="Office pack needed"
+      aria-label={`${info.name} needed`}
     >
       <motion.div
         className="flex w-[340px] flex-col gap-3 rounded-2xl border p-4 text-xs"
@@ -60,7 +61,7 @@ export function OfficePackDialog({ op, onDone }: { op: Operation; onDone: (insta
       >
         <header className="flex items-center gap-2">
           <Download size={14} style={{ color: "var(--accent)" }} />
-          <span className="flex-1 font-semibold">{op.label} needs the Office pack</span>
+          <span className="flex-1 font-semibold">{op.label} needs the {info.name}</span>
           {!installing && (
             <button aria-label="Close" onClick={() => onDone(false)} className="rounded-md p-1" style={{ color: "var(--text-dim)" }}>
               <X size={14} />
@@ -71,15 +72,12 @@ export function OfficePackDialog({ op, onDone }: { op: Operation; onDone: (insta
         {!status && <p style={{ color: "var(--text-dim)" }}>Checking…</p>}
 
         {status?.state === "unsupported" && (
-          <p>There is no Office pack for this system yet, so Office conversions aren’t available here.</p>
+          <p>There is no {info.name} for this system yet, so {op.label} isn’t available here.</p>
         )}
 
         {offer && (status?.state === "not_installed" || installing) && (
           <>
-            <p className="leading-relaxed">
-              Word, Excel and PowerPoint conversions use <b>LibreOffice {offer.version}</b>, which isn’t included with
-              Rupantar. Download it from {offer.source}?
-            </p>
+            <p className="leading-relaxed">{info.offer(offer.version, offer.source)}</p>
             <p className="tabular-nums" style={{ color: "var(--text-dim)" }}>
               {formatBytes(offer.download_bytes)} download · about {formatBytes(offer.installed_bytes)} on disk
               {resumeFrom > 0 && ` · resumes from ${formatBytes(resumeFrom)}`}
@@ -89,7 +87,7 @@ export function OfficePackDialog({ op, onDone }: { op: Operation; onDone: (insta
               remove the pack in Settings.
             </p>
             {!offer.tested && (
-              <p style={{ color: "#f59e0b" }}>The Office pack hasn’t been tested on this platform yet.</p>
+              <p style={{ color: "#f59e0b" }}>The {info.name} hasn’t been tested on this platform yet.</p>
             )}
           </>
         )}
@@ -122,7 +120,7 @@ export function OfficePackDialog({ op, onDone }: { op: Operation; onDone: (insta
               </button>
               {status?.state === "not_installed" && (
                 <button className={button} style={{ background: "var(--accent)", color: "#fff" }} onClick={() => void start()}>
-                  {error ? "Try again" : op.label.startsWith("To ") ? `Download & convert to ${op.label.slice(3)}` : "Download"}
+                  {error ? "Try again" : pack === "office" && op.label.startsWith("To ") ? `Download & convert to ${op.label.slice(3)}` : "Download & continue"}
                 </button>
               )}
             </>

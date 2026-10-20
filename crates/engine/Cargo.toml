@@ -10,6 +10,10 @@ crc32fast = "1.5"
 csv = "1.4"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
 lopdf = { version = "0.45", default-features = false }
+# ONNX Runtime for background removal, loaded at runtime from the AI pack (`load-dynamic`: nothing
+# is downloaded or linked at build time). rc.13 is the newest with rust-version 1.88 (Replit).
+# The EP features only add the registration calls; whether an EP works depends on the library.
+ort = { version = "=2.0.0-rc.13", default-features = false, features = ["load-dynamic", "std", "cuda", "directml", "coreml"] }
 # Dynamic binding only (the library is loaded at runtime from EngineConfig::pdfium_path).
 # pdfium_7881 must match the release pinned in scripts/fetch-pdfium.sh.
 pdfium-render = { version = "0.9.4", default-features = false, features = ["pdfium_7881", "image_025", "thread_safe"] }
@@ -19,6 +23,10 @@ serde_json = "1.0.154"
 thiserror = "1"
 # Reading DOCX packages (same features calamine already enables).
 zip = { version = "9", default-features = false, features = ["deflate"] }
+
+[target.'cfg(windows)'.dependencies]
+# Preloads the AI pack's DirectML.dll next to onnxruntime.dll (see `ai::preload_directml`).
+libloading = "0.9"
 
 [dev-dependencies]
 # Fixture builders: `cfb` for .xls containers (`zip`, a normal dependency, builds .ods/.docx).

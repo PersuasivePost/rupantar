@@ -16,6 +16,8 @@ sha2 = "0.10"
 tar = "0.4"
 thiserror = "1"
 ureq = { version = "3", default-features = false, features = ["rustls"] }
+# The AI pack's zips (Real-ESRGAN, NuGet packages); same version and features as the engine.
+zip = { version = "9", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]
 tempfile = "3"

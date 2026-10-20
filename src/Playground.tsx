@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence } from "framer-motion";
 import { Monitor, Moon, MousePointerClick, Sun, type LucideIcon } from "lucide-react";
-import { listOperations, onOfficePackChanged, pickFiles, runOperation, setMockTools, setShowPlanned, type MockTools, type Operation, type Options } from "./api";
+import {
+  PACK_IDS, listOperations, onPackChanged, pickFiles, runOperation, setMockTools, setShowPlanned, type MockTools, type Operation,
+  type Options, type RunControl,
+} from "./api";
 import { fileIcon } from "./icons";
 import { LAYOUT_TEST_MIME, SAMPLE_FILES, commonMime, mimeFromFile } from "./mockFiles";
 import { usePrompt } from "./components/CropDialog";
@@ -37,6 +40,7 @@ const TOOLS: { key: keyof MockTools; label: string }[] = [
   { key: "typst", label: "typst" },
   { key: "pdfium", label: "pdfium" },
   { key: "office", label: "Office pack" },
+  { key: "ai", label: "AI pack" },
 ];
 
 /**
@@ -47,7 +51,7 @@ const TOOLS: { key: keyof MockTools; label: string }[] = [
 export default function Playground() {
   const [types, setTypes] = useState<string[]>([SAMPLE_FILES[0].label]);
   const [copies, setCopies] = useState("1");
-  const [tools, setTools] = useState<MockTools>({ pandoc: true, typst: true, pdfium: true, office: false });
+  const [tools, setTools] = useState<MockTools>({ pandoc: true, typst: true, pdfium: true, office: false, ai: false });
   const [planned, setPlanned] = useState(false);
   const [menu, setMenu] = useState<OpenMenu | null>(null);
   const [log, setLog] = useState<string[]>([]);
@@ -71,11 +75,13 @@ export default function Playground() {
     });
   };
 
-  // The consent dialog's (mock) download flips the Office pack switch on.
+  // The consent dialog's (mock) download flips that pack's switch on.
   useEffect(() => {
-    let off: (() => void) | undefined;
-    void onOfficePackChanged((s) => setTools((t) => ({ ...t, office: s.state === "installed" }))).then((f) => (off = f));
-    return () => off?.();
+    const offs: Array<() => void> = [];
+    for (const pack of PACK_IDS) {
+      void onPackChanged(pack, (s) => setTools((t) => ({ ...t, [pack]: s.state === "installed" }))).then((f) => offs.push(f));
+    }
+    return () => offs.forEach((f) => f());
   }, []);
 
   const toggleTool = (key: keyof MockTools) => {
@@ -113,19 +119,22 @@ export default function Playground() {
   };
 
   const onConfirm = useCallback(
-    async (op: Operation, parent?: Operation, options?: Options) => {
+    async (op: Operation, parent?: Operation, options?: Options, control?: RunControl) => {
       if (!menu) return;
-      const out = await runOperation(op, menu.names, { ...(parent && { parent: parent.id }), ...options });
+      const out = await runOperation(op, menu.names, { ...(parent && { parent: parent.id }), ...options }, control);
       const via = parent ? `${parent.label} › ${op.label}` : op.label;
       const result = out.length === 1 ? out[0] : `${out.length} files`;
-      const picked = options ? ` (${Object.entries(options).map(([k, v]) => `${k} ${v}`).join(", ")})` : "";
+      const picked = options && Object.keys(options).length ? ` (${Object.entries(options).map(([k, v]) => `${k} ${v}`).join(", ")})` : "";
       setLog((l) => [`${menu.file.name} → ${via}${picked} → ${result}`, ...l].slice(0, 5));
     },
     [menu],
   );
 
   const { prompt, element: promptElement } = usePrompt();
-  const onPrompt = useCallback((op: Operation) => prompt(op, menu?.names[0] ?? "", menu?.file.name ?? ""), [menu, prompt]);
+  const onPrompt = useCallback(
+    (op: Operation, parent?: Operation) => prompt(op, menu?.names[0] ?? "", menu?.file.name ?? "", parent),
+    [menu, prompt],
+  );
 
   const close = useCallback(() => setMenu(null), []);
 

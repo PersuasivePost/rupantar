@@ -207,12 +207,15 @@ pub fn engine_config(app: &AppHandle) -> engine::EngineConfig {
     let pdfium_dirs: Vec<PathBuf> =
         app.path().resource_dir().ok().map(|d| d.join("pdfium")).into_iter().chain(exe_dir).collect();
     config.pdfium_path = engine::pdf::find_pdfium(&pdfium_dirs);
-    config.soffice_path = crate::office_pack::program(app);
+    crate::packs::apply(app, &mut config);
     for (tool, path) in [
         ("pandoc", &config.pandoc_path),
         ("typst", &config.typst_path),
         ("pdfium", &config.pdfium_path),
         ("LibreOffice (Office pack)", &config.soffice_path),
+        ("ONNX Runtime (AI pack)", &config.onnxruntime_path),
+        ("BiRefNet (AI pack)", &config.birefnet_path),
+        ("Real-ESRGAN (AI pack)", &config.realesrgan_path),
     ] {
         match path {
             Some(p) => eprintln!("rupantar: using {tool} at {}", p.display()),

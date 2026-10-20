@@ -4,10 +4,13 @@ use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
 use std::io::{ErrorKind, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
+pub mod ai;
 pub mod catalog;
 pub mod copy;
 pub mod documents;
@@ -41,6 +44,15 @@ pub enum EngineError {
     PackMissing(String),
     #[error("{tool} did not finish within {} s and was stopped", .timeout.as_secs())]
     ToolTimeout { tool: String, timeout: Duration },
+    /// The user cancelled the run (`Job::cancel`); whatever was half written is gone.
+    #[error("cancelled")]
+    Cancelled,
+    /// Upscaling runs on the GPU through Vulkan, and there is no usable Vulkan device.
+    #[error("Upscale needs a graphics card with Vulkan support, and none was found ({0})")]
+    NoGpu(String),
+    /// ONNX Runtime could not load or run the model.
+    #[error("background removal failed: {0}")]
+    Inference(String),
     #[error("image error: {0}")]
     Image(#[from] image::ImageError),
     #[error("spreadsheet error: {0}")]
@@ -159,6 +171,12 @@ pub struct EngineConfig {
     /// LibreOffice's `soffice` program from the installed Office pack. Never looked up on PATH:
     /// the shell sets it from the pack, so the version is the pinned one.
     pub soffice_path: Option<PathBuf>,
+    /// From the installed AI pack (set by the shell, never looked up): the ONNX Runtime shared
+    /// library, the BiRefNet lite model, and the Real-ESRGAN ncnn-vulkan program (its `models/`
+    /// folder next to it).
+    pub onnxruntime_path: Option<PathBuf>,
+    pub birefnet_path: Option<PathBuf>,
+    pub realesrgan_path: Option<PathBuf>,
     /// Upper bound for one external tool run; the process is killed after this.
     pub tool_timeout: Duration,
 }
@@ -170,6 +188,9 @@ impl Default for EngineConfig {
             typst_path: None,
             pdfium_path: None,
             soffice_path: None,
+            onnxruntime_path: None,
+            birefnet_path: None,
+            realesrgan_path: None,
             tool_timeout: Duration::from_secs(120),
         }
     }
@@ -206,14 +227,82 @@ pub trait Converter: Send + Sync {
     /// Must return `EngineError::UnknownOperation` for an op id it does not own, so the
     /// registry can try the next converter.
     fn run(&self, op: &Operation, inputs: &[PathBuf], options: &Options) -> Result<Vec<PathBuf>>;
+    /// `run` with progress and cancellation. Converters whose work takes long (the AI pack's)
+    /// override it, report through `job` and stop with `EngineError::Cancelled` once it is
+    /// cancelled; the rest ignore the job.
+    fn run_job(&self, op: &Operation, inputs: &[PathBuf], options: &Options, job: &Job) -> Result<Vec<PathBuf>> {
+        let _ = job;
+        self.run(op, inputs, options)
+    }
 }
 
-/// The result of [`Registry::run_traced`]: the files written and the converter that wrote them.
+/// How far a run has got: `fraction` in 0..=1 and what it is doing ("Removing background on
+/// CPU…").
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Progress {
+    pub fraction: f32,
+    pub label: String,
+}
+
+/// Progress reporting and cancellation for one run, shared by the caller (who may cancel from
+/// another thread) and the converter. Also carries a note on how the work was done (e.g. which
+/// execution provider), which ends up in the log next to the engine's name.
+pub struct Job {
+    cancelled: AtomicBool,
+    progress: Box<dyn Fn(&Progress) + Send + Sync>,
+    note: Mutex<Option<String>>,
+}
+
+impl Default for Job {
+    fn default() -> Self {
+        Self::new(|_| {})
+    }
+}
+
+impl Job {
+    pub fn new(progress: impl Fn(&Progress) + Send + Sync + 'static) -> Self {
+        Self { cancelled: AtomicBool::new(false), progress: Box::new(progress), note: Mutex::new(None) }
+    }
+
+    /// Asks the run to stop; it ends with `EngineError::Cancelled` at its next check.
+    pub fn cancel(&self) {
+        self.cancelled.store(true, Ordering::SeqCst);
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::SeqCst)
+    }
+
+    /// `Err(Cancelled)` once cancelled.
+    pub fn check(&self) -> Result<()> {
+        if self.is_cancelled() {
+            Err(EngineError::Cancelled)
+        } else {
+            Ok(())
+        }
+    }
+
+    pub fn report(&self, fraction: f32, label: &str) {
+        (self.progress)(&Progress { fraction: fraction.clamp(0.0, 1.0), label: label.to_string() });
+    }
+
+    /// Records how the work was done ("CUDA", "CPU", ...), for the log.
+    pub fn note(&self, note: impl Into<String>) {
+        *self.note.lock().unwrap_or_else(|e| e.into_inner()) = Some(note.into());
+    }
+
+    fn take_note(&self) -> Option<String> {
+        self.note.lock().unwrap_or_else(|e| e.into_inner()).take()
+    }
+}
+
+/// The result of [`Registry::run_job`]: the files written and the converter that wrote them.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Run {
     pub outputs: Vec<PathBuf>,
-    /// `Converter::name` of the converter that ran the operation.
-    pub engine: &'static str,
+    /// `Converter::name` of the converter that ran the operation, plus its `Job::note` in
+    /// parentheses if it left one ("AI (ONNX Runtime on CPU)").
+    pub engine: String,
 }
 
 #[derive(Default)]
@@ -258,6 +347,7 @@ impl Registry {
         // `sheet.to_xlsx` for workbooks (the sheet converter's is CSV only).
         r.register(Box::new(libreoffice::LibreOfficeConverter::new(config)));
         r.register(Box::new(images::ImageConverter));
+        r.register(Box::new(ai::AiConverter::new(config)));
         r.register(Box::new(sheets::SheetConverter));
         r.register(Box::new(pdf::PdfConverter::new(config)));
         r.register(Box::new(office::OfficeConverter));
@@ -352,12 +442,23 @@ impl Registry {
     /// [`Registry::run_for`], also reporting which converter ran (e.g. DOCX -> PDF:
     /// "LibreOffice" when the Office pack is installed, else "pandoc").
     pub fn run_traced(&self, mimes: &[String], op: &Operation, inputs: &[PathBuf], options: &Options) -> Result<Run> {
+        self.run_job(mimes, op, inputs, options, &Job::default())
+    }
+
+    /// [`Registry::run_traced`] with progress and cancellation through `job`.
+    pub fn run_job(&self, mimes: &[String], op: &Operation, inputs: &[PathBuf], options: &Options, job: &Job) -> Result<Run> {
         let mut tried = false;
         for c in self.converters.iter().filter(|c| mimes.iter().all(|m| c.can_handle(m))) {
             tried = true;
-            match c.run(op, inputs, options) {
+            match c.run_job(op, inputs, options, job) {
                 Err(EngineError::UnknownOperation(_)) => continue,
-                other => return other.map(|outputs| Run { outputs, engine: c.name() }),
+                other => {
+                    let engine = match job.take_note() {
+                        Some(note) => format!("{} ({note})", c.name()),
+                        None => c.name().to_string(),
+                    };
+                    return other.map(|outputs| Run { outputs, engine });
+                }
             }
         }
         Err(if tried {
@@ -492,7 +593,10 @@ mod tests {
             pandoc_path: Some(exe.clone()),
             typst_path: Some(exe.clone()),
             pdfium_path: Some(exe.clone()),
-            soffice_path: Some(exe),
+            soffice_path: Some(exe.clone()),
+            onnxruntime_path: Some(exe.clone()),
+            birefnet_path: Some(exe.clone()),
+            realesrgan_path: Some(exe),
             ..EngineConfig::default()
         })
     }
@@ -534,8 +638,8 @@ mod tests {
         assert_eq!(
             visible(&r.operations("image/png")),
             [
-                "image.compress", "image.resize", "image.convert", "image.crop", "image.rotate", "image.grayscale",
-                "image.strip_metadata", "copy",
+                "image.compress", "image.resize", "image.convert", "image.crop", "image.remove_bg", "image.rotate",
+                "image.grayscale", "image.upscale", "image.strip_metadata", "copy",
             ]
         );
         assert_eq!(
@@ -653,6 +757,44 @@ mod tests {
         assert!(matches!(err, EngineError::ToolMissing(_)), "falls through to pandoc: {err}");
         let err = r.run_for(&mimes(&[mime::DOC]), &op, &[b], &Options::new()).unwrap_err();
         assert!(matches!(err, EngineError::PackMissing(_)), "{err}");
+    }
+
+    /// Without the AI pack its operations keep their catalog places (Remove background is one
+    /// of the image wedges), flagged as needing the pack, and so do their sub-options.
+    #[test]
+    fn ai_pack_ops_are_flagged_and_keep_their_places() {
+        let r = Registry::with_defaults();
+        let ops = r.operations_for(&mimes(&["image/png", "image/jpeg"]));
+        let at = |id: &str| ops.iter().position(|o| o.id == id).unwrap();
+        for id in ["image.remove_bg", "image.upscale"] {
+            let op = &ops[at(id)];
+            assert_eq!((op.available, op.pack.as_deref(), op.more), (false, Some(ai::PACK), false), "{id}");
+            assert!(op.children.len() == 2 && op.children.iter().all(|c| c.pack.as_deref() == Some(ai::PACK)), "{id}");
+        }
+        assert!(ops.iter().all(|o| o.id != "image.crop"), "crop is single-file");
+        assert!(at("image.remove_bg") < at("image.rotate") && at("image.rotate") < at("image.upscale"));
+    }
+
+    #[test]
+    fn jobs_report_progress_cancel_and_name_the_engine() {
+        let seen = std::sync::Arc::new(Mutex::new(Vec::new()));
+        let log = std::sync::Arc::clone(&seen);
+        let job = Job::new(move |p| log.lock().unwrap().push(p.clone()));
+        job.report(1.5, "almost");
+        assert_eq!(seen.lock().unwrap()[0], Progress { fraction: 1.0, label: "almost".into() }, "clamped");
+        assert!(job.check().is_ok());
+        job.cancel();
+        assert!(matches!(job.check(), Err(EngineError::Cancelled)));
+
+        // Converters that ignore the job still run through `run_job`; a note joins the name.
+        let d = tempfile::tempdir().unwrap();
+        let png = d.path().join("a.png");
+        image::RgbImage::new(4, 2).save(&png).unwrap();
+        let r = Registry::with_defaults();
+        let job = Job::default();
+        job.note("test note");
+        let run = r.run_job(&mimes(&["image/png"]), &Operation::new("image.rotate.90", "", ""), &[png], &Options::new(), &job).unwrap();
+        assert_eq!(run.engine, "image (test note)");
     }
 
     #[test]
