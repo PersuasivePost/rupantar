@@ -16,6 +16,8 @@ type State =
 
 /** How long the exit animation needs before the OS window can be hidden without clipping it. */
 const EXIT_MS = 380;
+/** Ignore dismiss requests this long after the file dialog closed (stray click / focus flicker). */
+const BROWSE_SETTLE_MS = 500;
 
 /** The transparent desktop window: waits for files, then shows the radial menu at the cursor. */
 export default function RadialHost() {
@@ -43,6 +45,7 @@ export default function RadialHost() {
   const stateRef = useRef(state);
   stateRef.current = state;
   const browsing = useRef(false);
+  const browseEnded = useRef(0);
 
   /**
    * Opens the native picker. From the drop target the choice becomes the selection; from a menu
@@ -62,10 +65,13 @@ export default function RadialHost() {
       console.error(e);
     } finally {
       browsing.current = false;
+      browseEnded.current = Date.now();
     }
   }, [open]);
 
   const close = useCallback(() => {
+    // A click/focus event left over from the closing file dialog must not dismiss the result.
+    if (Date.now() - browseEnded.current < BROWSE_SETTLE_MS) return;
     setState({ kind: "idle" });
     cancelHide();
     hideTimer.current = window.setTimeout(() => void hideRadial(), EXIT_MS);

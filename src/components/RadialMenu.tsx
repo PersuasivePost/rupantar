@@ -242,9 +242,15 @@ export function RadialMenu({ origin, file, operations: all, onConfirm, onPrompt,
     [confirm, expand, onDismiss, operations, ringFor, turnPage],
   );
 
+  // Moving away only cancels once the pointer has been inside the ring: after the file picker
+  // closes it is wherever the dialog's Open button was, usually outside.
+  const entered = useRef(false);
+
   const onPointerMove = (e: React.PointerEvent) => {
     if (latest.current.phase !== "choosing") return;
-    const s = resolve(e.clientX, e.clientY);
+    let s = resolve(e.clientX, e.clientY);
+    if (!s.dismiss) entered.current = true;
+    else if (!entered.current) s = { hi: null, sub: null, expanded: latest.current.expanded, dismiss: false };
     apply(s);
     const aimed = s.hi !== null && !s.dismiss;
     const p = polar(R_DISC + 9, angleFromUp(e.clientX - center.x, e.clientY - center.y));

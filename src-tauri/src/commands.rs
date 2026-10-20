@@ -148,6 +148,10 @@ pub async fn pick_files(app: AppHandle, state: State<'_, Shell>) -> Result<Vec<S
     state.hide_on_blur.store(hide_before, Ordering::SeqCst);
     state.touch();
     state.picking.store(false, Ordering::SeqCst);
+    // The dialog hands focus back unevenly (sometimes to another window); take it back.
+    if let Some(win) = app.get_webview_window(shell::RADIAL) {
+        let _ = win.set_focus();
+    }
 
     let paths: Vec<PathBuf> = picked.unwrap_or_default().into_iter().filter_map(|p| p.into_path().ok()).collect();
     if let Some(dir) = paths.first().and_then(|p| p.parent()) {
@@ -171,6 +175,11 @@ pub fn hide_radial(app: AppHandle) {
 
 #[tauri::command]
 pub fn set_hide_on_blur(state: State<Shell>, enabled: bool) {
+    // Arming it restarts the grace period, so focus still settling (e.g. right after the file
+    // dialog closed) can't hide the window the moment the menu appears.
+    if enabled && !state.hide_on_blur.load(Ordering::SeqCst) {
+        state.touch();
+    }
     state.hide_on_blur.store(enabled, Ordering::SeqCst);
 }
 
