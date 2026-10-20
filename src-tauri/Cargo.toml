@@ -23,6 +23,7 @@ serde_json = "1"
 base64 = "0.22"
 engine = { path = "../crates/engine" }
 placement = { path = "../crates/placement" }
+tauri-plugin-dialog = "2"
 
 [dev-dependencies]
 tempfile = "3"

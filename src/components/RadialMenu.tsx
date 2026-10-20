@@ -19,6 +19,8 @@ const R_OUT = 168;
 const S_IN = 178;
 const S_OUT = 240;
 const DEAD = 34;
+/** A click on the center disc waits this long for a second click (browse) before it dismisses. */
+const DOUBLE_CLICK_MS = 300;
 const GAP = 3;
 /** Slot width in the More ring: eight fill the circle. */
 const MORE_SLOT = TAU / RING_SLOTS;
@@ -63,6 +65,11 @@ export interface RadialMenuProps {
    * cancelled, which dismisses the menu. Without it, prompted operations just dismiss.
    */
   onPrompt?: (op: Operation) => Promise<Options | null>;
+  /**
+   * Lets the user add files: double-clicking the center disc or Ctrl/Cmd+O calls this. Without
+   * it the disc is just a cancel target.
+   */
+  onBrowse?: () => void;
   onDismiss: () => void;
   /** Called after the success animation finishes. */
   onDone: () => void;
@@ -75,7 +82,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const labelWidth = (r: number, span: number, fill: number) => 2 * r * Math.sin(Math.min(span, Math.PI) / 2) * fill;
 const spring = { type: "spring", stiffness: 420, damping: 28, mass: 0.8 } as const;
 
-export function RadialMenu({ origin, file, operations: all, onConfirm, onPrompt, onDismiss, onDone, scrim = true }: RadialMenuProps) {
+export function RadialMenu({ origin, file, operations: all, onConfirm, onPrompt, onBrowse, onDismiss, onDone, scrim = true }: RadialMenuProps) {
   const reduced = !!useReducedMotion();
   const uid = useId().replace(/:/g, "");
   const operations = useMemo(() => menuWedges(visibleOperations(all)), [all]);
@@ -244,10 +251,24 @@ export function RadialMenu({ origin, file, operations: all, onConfirm, onPrompt,
     aimY.set(aimed ? p.y : 0);
   };
 
+  const inDisc = (e: React.MouseEvent) => Math.hypot(e.clientX - center.x, e.clientY - center.y) < R_DISC;
+
   const onClick = (e: React.MouseEvent) => {
     e.stopPropagation(); // the click that confirms must not reach the page underneath and reopen the menu
     if (latest.current.phase !== "choosing") return;
+    if (onBrowse && inDisc(e)) {
+      // A click on the disc dismisses, but only once it is clear no second click follows.
+      if (e.detail < 2) timers.current.push(window.setTimeout(onDismiss, DOUBLE_CLICK_MS));
+      return;
+    }
     activate(resolve(e.clientX, e.clientY));
+  };
+
+  const onDoubleClick = (e: React.MouseEvent) => {
+    if (!onBrowse || latest.current.phase !== "choosing" || !inDisc(e)) return;
+    timers.current.forEach(clearTimeout);
+    timers.current = [];
+    onBrowse();
   };
 
   // The wheel pages a paged ring (throttled: trackpads send bursts).
@@ -278,6 +299,9 @@ export function RadialMenu({ origin, file, operations: all, onConfirm, onPrompt,
           setHi((((h ?? (dir > 0 ? -1 : 0)) + dir) % n + n) % n);
           expand(null);
         }
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "o") {
+        e.preventDefault();
+        if (!e.repeat) onBrowse?.();
       } else if (e.key === "Enter") {
         e.preventDefault();
         activate({ hi: h, sub: s, expanded: exp, dismiss: false });
@@ -292,7 +316,7 @@ export function RadialMenu({ origin, file, operations: all, onConfirm, onPrompt,
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [activate, expand, n, onDismiss, ringFor]);
+  }, [activate, expand, n, onBrowse, onDismiss, ringFor]);
 
   // ---- variants -----------------------------------------------------------------------------
   // Reduced motion keeps the same states but swaps spring/scale for short opacity fades.
@@ -362,6 +386,7 @@ export function RadialMenu({ origin, file, operations: all, onConfirm, onPrompt,
       exit="hidden"
       onPointerMove={onPointerMove}
       onClick={onClick}
+      onDoubleClick={onDoubleClick}
       onWheel={onWheel}
       onContextMenu={(e) => { e.preventDefault(); if (phase === "choosing") onDismiss(); }}
     >

@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import { AnimatePresence } from "framer-motion";
 import { Monitor, Moon, MousePointerClick, Sun, type LucideIcon } from "lucide-react";
-import { listOperations, runOperation, setMockTools, setShowPlanned, type MockTools, type Operation, type Options } from "./api";
+import { listOperations, pickFiles, runOperation, setMockTools, setShowPlanned, type MockTools, type Operation, type Options } from "./api";
 import { fileIcon } from "./icons";
 import { LAYOUT_TEST_MIME, SAMPLE_FILES, commonMime, mimeFromFile } from "./mockFiles";
 import { usePrompt } from "./components/CropDialog";
@@ -121,6 +121,32 @@ export default function Playground() {
 
   const close = useCallback(() => setMenu(null), []);
 
+  // Double-click on the disc / Ctrl+O: add chosen files to the selection (same name once).
+  const menuRef = useRef(menu);
+  menuRef.current = menu;
+  const browsing = useRef(false);
+  const onBrowse = useCallback(async () => {
+    if (browsing.current) return;
+    browsing.current = true;
+    try {
+      const picked = await pickFiles();
+      const cur = menuRef.current;
+      if (!cur) return;
+      const names = [...new Set([...cur.names, ...picked])];
+      if (names.length === cur.names.length) return;
+      const mimes = names.map((name) => mimeFromFile({ name }));
+      setMenu({
+        ...cur,
+        id: nextId.current++,
+        names,
+        file: { name: names.length === 1 ? names[0] : `${names.length} files`, mime: commonMime(mimes) },
+        operations: await listOperations(mimes),
+      });
+    } finally {
+      browsing.current = false;
+    }
+  }, []);
+
   return (
     <div
       className="relative h-full w-full cursor-crosshair overflow-hidden"
@@ -200,6 +226,7 @@ export default function Playground() {
             operations={menu.operations}
             onConfirm={onConfirm}
             onPrompt={onPrompt}
+            onBrowse={onBrowse}
             onDismiss={close}
             onDone={close}
           />

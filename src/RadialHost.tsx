@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { FileDown } from "lucide-react";
 import {
-  describeFiles, frontendReady, hideRadial, listOperations, onFilesDropped, onSummon,
+  describeFiles, frontendReady, hideRadial, listOperations, onFilesDropped, onSummon, pickFiles,
   runOperation, setHideOnBlur, type FileBatch, type Operation, type SummonPayload,
 } from "./api";
 import { usePrompt } from "./components/CropDialog";
@@ -39,6 +39,31 @@ export default function RadialHost() {
       setState({ kind: "await", origin: at }); // unreadable drop: keep waiting
     }
   }, []);
+
+  const stateRef = useRef(state);
+  stateRef.current = state;
+  const browsing = useRef(false);
+
+  /**
+   * Opens the native picker. From the drop target the choice becomes the selection; from a menu
+   * it is added to it (same path once). Cancelling, or choosing nothing new, changes nothing.
+   */
+  const browse = useCallback(async () => {
+    if (browsing.current) return;
+    browsing.current = true;
+    try {
+      const picked = await pickFiles();
+      const cur = stateRef.current;
+      if (!picked.length || cur.kind === "idle") return;
+      if (cur.kind === "await") return void (await open(cur.origin, picked));
+      const merged = [...new Set([...cur.batch.paths, ...picked])];
+      if (merged.length > cur.batch.paths.length) await open(cur.origin, merged);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      browsing.current = false;
+    }
+  }, [open]);
 
   const close = useCallback(() => {
     setState({ kind: "idle" });
@@ -87,10 +112,23 @@ export default function RadialHost() {
     void setHideOnBlur(state.kind === "menu");
   }, [state.kind]);
 
+  // Ctrl/Cmd+O browses while the drop target is up (an open menu handles it itself).
+  useEffect(() => {
+    if (state.kind !== "await") return;
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "o") {
+        e.preventDefault();
+        if (!e.repeat) void browse();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [state.kind, browse]);
+
   return (
     <AnimatePresence>
       {state.kind === "await" && (
-        <DropTarget key="await" origin={state.origin} active={dragOver} onDismiss={close} />
+        <DropTarget key="await" origin={state.origin} active={dragOver} onBrowse={browse} onDismiss={close} />
       )}
       {state.kind === "menu" && (
         <RadialMenu
@@ -102,6 +140,7 @@ export default function RadialHost() {
           onConfirm={(op, parent, options) =>
             runOperation(op, state.batch.paths, { ...(parent && { parent: parent.id }), ...options })
           }
+          onBrowse={browse}
           onPrompt={(op) => prompt(op, state.batch.paths[0], state.batch.label)}
           onDismiss={close}
           onDone={close}
@@ -112,7 +151,12 @@ export default function RadialHost() {
   );
 }
 
-function DropTarget({ origin, active, onDismiss }: { origin: Origin; active: boolean; onDismiss: () => void }) {
+function DropTarget({ origin, active, onBrowse, onDismiss }: {
+  origin: Origin;
+  active: boolean;
+  onBrowse: () => void;
+  onDismiss: () => void;
+}) {
   const reduced = !!useReducedMotion();
 
   useEffect(() => {
@@ -135,13 +179,16 @@ function DropTarget({ origin, active, onDismiss }: { origin: Origin; active: boo
       aria-label="Drop files to convert"
     >
       <motion.div
-        className="absolute flex flex-col items-center justify-center gap-1 rounded-full text-center"
+        className="absolute flex cursor-pointer flex-col items-center justify-center gap-1 rounded-full text-center"
         style={{
           left: origin.x - size / 2, top: origin.y - size / 2, width: size, height: size,
           background: "linear-gradient(var(--shell-under, transparent), var(--shell-under, transparent)), var(--disc-bg)",
           backdropFilter: "blur(22px) saturate(1.5)", WebkitBackdropFilter: "blur(22px) saturate(1.5)",
           willChange: "transform",
         }}
+        onClick={(e) => { e.stopPropagation(); onBrowse(); }}
+        role="button"
+        aria-label="Drop files, or click to browse"
         initial={{ scale: reduced ? 1 : 0.6 }}
         animate={{ scale: active && !reduced ? 1.1 : 1 }}
         exit={{ scale: reduced ? 1 : 0.6 }}
@@ -156,7 +203,7 @@ function DropTarget({ origin, active, onDismiss }: { origin: Origin; active: boo
         />
         <FileDown size={28} strokeWidth={1.6} className="relative" />
         <span className="relative text-[11px] font-medium">Drop files</span>
-        <span className="relative text-[9px]" style={{ color: "var(--text-dim)" }}>Esc to cancel</span>
+        <span className="relative text-[9px]" style={{ color: "var(--text-dim)" }}>or click to browse</span>
       </motion.div>
     </motion.div>
   );

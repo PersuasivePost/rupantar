@@ -10,11 +10,13 @@ pub const DEFAULT_SHORTCUT: &str = "CommandOrControl+Shift+Space";
 pub struct Settings {
     pub shortcut: String,
     pub autostart: bool,
+    /// Folder the file picker opened last (the parent of the first file chosen).
+    pub last_dir: Option<String>,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { shortcut: DEFAULT_SHORTCUT.to_string(), autostart: false }
+        Self { shortcut: DEFAULT_SHORTCUT.to_string(), autostart: false, last_dir: None }
     }
 }
 
@@ -46,12 +48,12 @@ mod tests {
     #[test]
     fn missing_fields_take_defaults() {
         let s: Settings = serde_json::from_str(r#"{"autostart": true}"#).unwrap();
-        assert_eq!(s, Settings { shortcut: DEFAULT_SHORTCUT.into(), autostart: true });
+        assert_eq!(s, Settings { shortcut: DEFAULT_SHORTCUT.into(), autostart: true, last_dir: None });
     }
 
     #[test]
     fn round_trips() {
-        let s = Settings { shortcut: "Alt+Space".into(), autostart: true };
+        let s = Settings { shortcut: "Alt+Space".into(), autostart: true, last_dir: Some("/tmp".into()) };
         assert_eq!(serde_json::from_str::<Settings>(&serde_json::to_string(&s).unwrap()).unwrap(), s);
     }
 }

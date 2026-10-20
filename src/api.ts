@@ -195,6 +195,8 @@ export interface DropEvent {
 export interface Settings {
   shortcut: string;
   autostart: boolean;
+  /** Folder the file picker opened last. */
+  last_dir?: string | null;
 }
 
 type Unlisten = () => void;
@@ -204,6 +206,29 @@ export async function describeFiles(paths: string[]): Promise<FileBatch> {
   const names = paths.map((p) => p.split(/[\\/]/).pop() ?? "file");
   const mimes = names.map((name) => mimeFromFile({ name }));
   return { paths, label: paths.length > 1 ? `${paths.length} files` : names[0] ?? "file", mime: commonMime(mimes), mimes };
+}
+
+/**
+ * Opens the native file picker (multi-select) and resolves to the chosen paths, empty when
+ * cancelled. In the browser a hidden `<input type="file">` stands in; it only knows file names,
+ * which then serve as the paths. Needs a user gesture, like any file input.
+ */
+export async function pickFiles(): Promise<string[]> {
+  if (isTauri()) return invoke<string[]>("pick_files");
+  return new Promise((resolve) => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.multiple = true;
+    input.hidden = true;
+    const done = (names: string[]) => {
+      input.remove();
+      resolve(names);
+    };
+    input.addEventListener("change", () => done(Array.from(input.files ?? [], (f) => f.name)));
+    input.addEventListener("cancel", () => done([]));
+    document.body.append(input);
+    input.click();
+  });
 }
 
 export async function onSummon(cb: (p: SummonPayload) => void): Promise<Unlisten> {

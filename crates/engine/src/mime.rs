@@ -45,6 +45,12 @@ const BY_EXTENSION: &[(&str, &str)] = &[
     ("zip", "application/zip"),
 ];
 
+/// Every file extension (lowercase, no dot) that `detect` recognises; the file picker's
+/// "supported" filter.
+pub fn known_extensions() -> impl Iterator<Item = &'static str> {
+    BY_EXTENSION.iter().map(|(ext, _)| *ext)
+}
+
 fn sniff(head: &[u8]) -> Option<&'static str> {
     if head.starts_with(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]) {
         Some("image/png")

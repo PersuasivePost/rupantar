@@ -20,12 +20,14 @@ pub fn run() {
             let files = shell::files_from_args(argv.get(1..).unwrap_or(&[]), Some(Path::new(&cwd)));
             shell::summon(app, files);
         }))
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, Some(vec!["--hidden"])))
         .invoke_handler(tauri::generate_handler![
             commands::list_operations,
             commands::run_operation,
             commands::preview_image,
             commands::describe_files,
+            commands::pick_files,
             commands::frontend_ready,
             commands::hide_radial,
             commands::set_hide_on_blur,

@@ -35,6 +35,8 @@ pub struct Summon {
 pub struct Shell {
     /// Hide the radial window when it loses focus (set by the frontend while a menu is open).
     pub hide_on_blur: AtomicBool,
+    /// A file dialog is open; a second request is ignored instead of stacking dialogs.
+    pub picking: AtomicBool,
     shown_at: Mutex<Instant>,
     /// False until the frontend registered its listeners; summons before that are queued.
     ready: AtomicBool,
@@ -45,10 +47,16 @@ impl Shell {
     pub fn new() -> Self {
         Self {
             hide_on_blur: AtomicBool::new(false),
+            picking: AtomicBool::new(false),
             shown_at: Mutex::new(Instant::now()),
             ready: AtomicBool::new(false),
             pending: Mutex::new(None),
         }
+    }
+
+    /// Restarts the focus-flicker grace period (the dialog closing hands focus back unevenly).
+    pub fn touch(&self) {
+        *self.shown_at.lock().unwrap() = Instant::now();
     }
 
     /// Marks the frontend as listening and hands over any summon that arrived before it was ready.

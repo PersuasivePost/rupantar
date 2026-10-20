@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use engine::{Operation, Options, Registry};
 use serde::Serialize;
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Manager, State};
 
 use crate::settings::{self, Settings};
 use crate::shell::{self, Shell, Summon};
@@ -90,6 +90,49 @@ pub fn describe_files(paths: Vec<PathBuf>) -> Result<FileBatch, String> {
         mime: engine::mime::common(&mimes),
         mimes,
     })
+}
+
+/// Native multi-select file picker, a child of the radial window so it opens above it. Returns
+/// the chosen paths (empty on cancel). Hide-on-blur is off while the dialog is up and goes back
+/// to what it was afterwards, whichever way the dialog closed; the folder is remembered.
+#[tauri::command]
+pub async fn pick_files(app: AppHandle, state: State<'_, Shell>) -> Result<Vec<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+
+    if state.picking.swap(true, Ordering::SeqCst) {
+        return Ok(Vec::new());
+    }
+    let hide_before = state.hide_on_blur.swap(false, Ordering::SeqCst);
+
+    let mut dialog = app.dialog().file().set_title("Choose files");
+    let extensions: Vec<&str> = engine::mime::known_extensions().collect();
+    dialog = dialog.add_filter("Supported files", &extensions).add_filter("All files", &["*"]);
+    let dir = settings::load(&app).last_dir.map(PathBuf::from).filter(|d| d.is_dir());
+    if let Some(dir) = dir {
+        dialog = dialog.set_directory(dir);
+    }
+    if let Some(win) = app.get_webview_window(shell::RADIAL) {
+        dialog = dialog.set_parent(&win);
+    }
+
+    let (tx, rx) = tauri::async_runtime::channel(1);
+    dialog.pick_files(move |files| {
+        let _ = tx.try_send(files);
+    });
+    let mut rx = rx;
+    let picked = rx.recv().await.flatten();
+
+    state.hide_on_blur.store(hide_before, Ordering::SeqCst);
+    state.touch();
+    state.picking.store(false, Ordering::SeqCst);
+
+    let paths: Vec<PathBuf> = picked.unwrap_or_default().into_iter().filter_map(|p| p.into_path().ok()).collect();
+    if let Some(dir) = paths.first().and_then(|p| p.parent()) {
+        let mut current = settings::load(&app);
+        current.last_dir = Some(dir.to_string_lossy().into_owned());
+        let _ = settings::save(&app, &current);
+    }
+    Ok(paths.iter().map(|p| p.to_string_lossy().into_owned()).collect())
 }
 
 /// Called once the frontend has registered its listeners; returns a summon that arrived earlier.
