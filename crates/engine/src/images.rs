@@ -619,7 +619,7 @@ mod tests {
         for parent in reg.operations("image/png").into_iter().filter(|o| o.available && o.prompt.is_none()) {
             let leaves = if parent.children.is_empty() { vec![parent.clone()] } else { parent.children.clone() };
             for op in leaves {
-                let out = reg.run("image/png", &op, &[png.clone()], &Options::new());
+                let out = reg.run("image/png", &op, std::slice::from_ref(&png), &Options::new());
                 assert!(out.is_ok(), "{} failed: {:?}", op.id, out.err());
             }
         }

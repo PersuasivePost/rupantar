@@ -431,9 +431,12 @@ mod tests {
     #[test]
     fn registry_offers_spreadsheet_ops() {
         let r = Registry::with_defaults();
-        assert_eq!(visible(&r.operations(mime::CSV)), ["sheet.to_xlsx", "sheet.to_json", "sheet.dedupe", "sheet.split_rows", "copy"]);
+        assert_eq!(
+            visible(&r.operations(mime::CSV)),
+            ["sheet.to_xlsx", "sheet.to_json", "sheet.change_delimiter", "sheet.dedupe", "sheet.sort", "sheet.split_rows", "copy"]
+        );
         for m in [mime::XLSX, mime::XLS, mime::ODS] {
-            assert_eq!(visible(&r.operations(m)), ["sheet.to_csv", "sheet.to_json", "copy"]);
+            assert_eq!(visible(&r.operations(m)), ["sheet.to_csv", "sheet.to_json", "sheet.split", "sheet.to_html", "copy"]);
         }
     }
 

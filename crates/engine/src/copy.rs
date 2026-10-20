@@ -48,7 +48,7 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let input = d.path().join("f.txt");
         std::fs::write(&input, b"hello").unwrap();
-        let out = CopyConverter.run(&copy_op(), &[input.clone()], &Options::new()).unwrap();
+        let out = CopyConverter.run(&copy_op(), std::slice::from_ref(&input), &Options::new()).unwrap();
         assert_eq!(out, vec![d.path().join("f (copy).txt")]);
         assert_eq!(std::fs::read(&out[0]).unwrap(), b"hello");
         assert!(input.exists());

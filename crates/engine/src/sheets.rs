@@ -27,6 +27,26 @@
 //! byte. Dedupe keeps the first of identical rows (`name (deduped).csv`); split writes parts of
 //! at most n data rows, each starting with the header (`name (part N).csv`). The delimiter is
 //! `options.delimiter`, else sniffed from the first line.
+//!
+//! Sort (`sheet.sort.asc` / `.desc`, option `order`): data rows sorted by column 1, or by
+//! `options.column` (1-based number or header name); the header stays first. Fields that parse
+//! as numbers sort numerically and before text, text ignores case, empty fields go last in
+//! either order; ties keep their order. Rows keep their bytes, each ends with the header's line
+//! ending (blank lines are dropped). Output: `name (sorted).csv`.
+//!
+//! Change delimiter (`sheet.change_delimiter.<comma|semicolon|tab>`, or `options.delimiter`
+//! for the target): rewritten with the target delimiter and minimal quoting; the source is
+//! `options.source_delimiter`, else sniffed. A BOM and the line ending (CRLF / LF) are kept.
+//! Output: `name (semicolon).csv` etc.
+//!
+//! Split sheets (`sheet.split`, XLSX / XLS / ODS): each non-empty sheet becomes its own
+//! `name - SheetName.xlsx` (same naming as To CSV). Values only: numbers, text, booleans,
+//! dates (with a date format) and cached formula results are kept; formatting, formulas,
+//! charts and images are not. A workbook with fewer than two sheets of data is `Empty`.
+//!
+//! To HTML (`sheet.to_html`, XLSX / XLS / ODS): one standalone `name (converted).html` with a
+//! table per non-empty sheet (a heading per sheet when there are several), the first row as
+//! the header, cell text as in To CSV, numbers right-aligned.
 
 use std::path::{Path, PathBuf};
 
@@ -46,6 +66,10 @@ const TO_XLSX: &str = "sheet.to_xlsx";
 const TO_JSON: &str = "sheet.to_json";
 const DEDUPE: &str = "sheet.dedupe";
 const SPLIT_ROWS: &str = "sheet.split_rows";
+const SORT: &str = "sheet.sort";
+const CHANGE_DELIMITER: &str = "sheet.change_delimiter";
+const SPLIT_SHEETS: &str = "sheet.split";
+const TO_HTML: &str = "sheet.to_html";
 /// `(id suffix, byte, label, lucide icon)`.
 const DELIMITERS: [(&str, u8, &str, &str); 3] = [
     ("comma", b',', "Comma", "Columns3"),
@@ -140,54 +164,63 @@ fn file_safe(name: &str) -> String {
     cleaned.trim().trim_end_matches('.').to_string()
 }
 
-fn workbook_to_csv(input: &Path, delimiter: u8) -> Result<Vec<PathBuf>> {
+/// The non-empty worksheets of a workbook, in order.
+fn data_sheets(input: &Path) -> Result<Vec<(String, Range<Data>)>> {
     if !input.is_file() {
         return Err(EngineError::InputNotFound(input.to_path_buf()));
     }
     let mut book = open_workbook_auto(input)?;
-    let names: Vec<String> = book
-        .sheets_metadata()
-        .iter()
-        .filter(|s| s.typ == SheetType::WorkSheet)
-        .map(|s| s.name.clone())
-        .collect();
+    let names: Vec<String> =
+        book.sheets_metadata().iter().filter(|s| s.typ == SheetType::WorkSheet).map(|s| s.name.clone()).collect();
     let mut sheets = Vec::new();
     for name in names {
         let range = book.worksheet_range(&name)?;
         if !range.is_empty() {
-            sheets.push((name, range_to_csv(&range, delimiter)?));
+            sheets.push((name, range));
         }
     }
+    Ok(sheets)
+}
 
+/// Writes `name - SheetName.ext` next to `input` for each sheet (`name - SheetName (2).ext`
+/// when taken; sheet names made file-safe), all or none.
+fn write_per_sheet(input: &Path, ext: &str, sheets: Vec<(String, Vec<u8>)>) -> Result<Vec<PathBuf>> {
+    let dir = input.parent().unwrap_or_else(|| Path::new(""));
+    let stem = input.file_stem().and_then(|s| s.to_str()).unwrap_or("output");
     let mut outputs = Vec::new();
-    if sheets.len() <= 1 {
-        let bytes = sheets.pop().map(|(_, b)| b).unwrap_or_default();
-        let (file, path) = create_unique_sibling(input, "converted", Some("csv"))?;
-        outputs.push((file, path, bytes));
-    } else {
-        let dir = input.parent().unwrap_or_else(|| Path::new(""));
-        let stem = input.file_stem().and_then(|s| s.to_str()).unwrap_or("output");
-        for (i, (name, bytes)) in sheets.into_iter().enumerate() {
-            let sheet = match file_safe(&name) {
-                s if s.is_empty() => format!("Sheet{}", i + 1),
-                s => s,
-            };
-            let created = create_unique(dir, |n| match n {
-                1 => format!("{stem} - {sheet}.csv"),
-                n => format!("{stem} - {sheet} ({n}).csv"),
-            });
-            match created {
-                Ok((file, path)) => outputs.push((file, path, bytes)),
-                Err(e) => {
-                    for (_, p, _) in &outputs {
-                        let _ = std::fs::remove_file(p);
-                    }
-                    return Err(e);
+    for (i, (name, bytes)) in sheets.into_iter().enumerate() {
+        let sheet = match file_safe(&name) {
+            s if s.is_empty() => format!("Sheet{}", i + 1),
+            s => s,
+        };
+        let created = create_unique(dir, |n| match n {
+            1 => format!("{stem} - {sheet}.{ext}"),
+            n => format!("{stem} - {sheet} ({n}).{ext}"),
+        });
+        match created {
+            Ok((file, path)) => outputs.push((file, path, bytes)),
+            Err(e) => {
+                for (_, p, _) in &outputs {
+                    let _ = std::fs::remove_file(p);
                 }
+                return Err(e);
             }
         }
     }
     write_all_or_nothing(outputs)
+}
+
+fn workbook_to_csv(input: &Path, delimiter: u8) -> Result<Vec<PathBuf>> {
+    let mut sheets = Vec::new();
+    for (name, range) in data_sheets(input)? {
+        sheets.push((name, range_to_csv(&range, delimiter)?));
+    }
+    if sheets.len() <= 1 {
+        let bytes = sheets.pop().map(|(_, b)| b).unwrap_or_default();
+        let (file, path) = create_unique_sibling(input, "converted", Some("csv"))?;
+        return write_all_or_nothing(vec![(file, path, bytes)]);
+    }
+    write_per_sheet(input, "csv", sheets)
 }
 
 /// A CSV field as an Excel number, if it is unambiguously one: `-?digits(.digits)?` with no
@@ -362,19 +395,7 @@ fn range_to_json(range: &Range<Data>, indent: &str) -> String {
 /// XLSX/XLS/ODS -> JSON: one non-empty sheet gives an array of row objects (keys from its first
 /// row; empty rows skipped); several give an object of those arrays keyed by sheet name.
 fn workbook_to_json(input: &Path) -> Result<PathBuf> {
-    if !input.is_file() {
-        return Err(EngineError::InputNotFound(input.to_path_buf()));
-    }
-    let mut book = open_workbook_auto(input)?;
-    let names: Vec<String> =
-        book.sheets_metadata().iter().filter(|s| s.typ == SheetType::WorkSheet).map(|s| s.name.clone()).collect();
-    let mut sheets = Vec::new();
-    for name in names {
-        let range = book.worksheet_range(&name)?;
-        if !range.is_empty() {
-            sheets.push((name, range));
-        }
-    }
+    let sheets = data_sheets(input)?;
     let text = match sheets.as_slice() {
         [] => "[]".to_string(),
         [(_, range)] => range_to_json(range, ""),
@@ -497,6 +518,275 @@ fn rows_per_part(id: &str, options: &Options) -> Result<usize> {
     }
 }
 
+
+// ---- sort / change delimiter ----------------------------------------------------------------
+
+/// A field as a number for sorting: anything Rust parses as a finite float (so `007`, `+4`
+/// and `1e3` count), without surrounding spaces.
+fn sort_number(field: &str) -> Option<f64> {
+    let f = field.trim();
+    if f.is_empty() || !f.bytes().all(|b| b.is_ascii_digit() || b"+-.eE".contains(&b)) {
+        return None;
+    }
+    f.parse::<f64>().ok().filter(|n| n.is_finite())
+}
+
+/// Numbers before text, text without case (ties: exact text); empty fields always last.
+fn compare_fields(a: &[u8], b: &[u8], descending: bool) -> std::cmp::Ordering {
+    use std::cmp::Ordering::*;
+    let (a, b) = (String::from_utf8_lossy(a), String::from_utf8_lossy(b));
+    let (a, b) = (a.trim(), b.trim());
+    match (a.is_empty(), b.is_empty()) {
+        (true, true) => return Equal,
+        (true, false) => return Greater,
+        (false, true) => return Less,
+        _ => {}
+    }
+    let order = match (sort_number(a), sort_number(b)) {
+        (Some(x), Some(y)) => x.partial_cmp(&y).unwrap_or(Equal),
+        (Some(_), None) => Less,
+        (None, Some(_)) => Greater,
+        (None, None) => a.to_lowercase().cmp(&b.to_lowercase()).then_with(|| a.cmp(b)),
+    };
+    if descending {
+        order.reverse()
+    } else {
+        order
+    }
+}
+
+/// The column to sort by (0-based): `options.column` as a 1-based number or a header name
+/// (exact, then ignoring case); the first column by default.
+fn sort_column(header: &[Vec<u8>], options: &Options) -> Result<usize> {
+    let Some(raw) = options.get("column").map(|c| c.trim()) else { return Ok(0) };
+    let names: Vec<String> = header.iter().map(|h| String::from_utf8_lossy(h).trim().to_string()).collect();
+    if let Some(i) = names.iter().position(|n| n == raw).or_else(|| names.iter().position(|n| n.eq_ignore_ascii_case(raw))) {
+        return Ok(i);
+    }
+    match raw.parse::<usize>() {
+        Ok(n @ 1..) if n <= header.len() => Ok(n - 1),
+        _ => Err(EngineError::InvalidOption(format!("no column `{raw}`"))),
+    }
+}
+
+/// The line ending a record ends with (CRLF if it has none).
+fn line_ending(raw: &[u8]) -> &'static [u8] {
+    if raw.ends_with(b"\r\n") {
+        b"\r\n"
+    } else if raw.ends_with(b"\n") {
+        b"\n"
+    } else if raw.ends_with(b"\r") {
+        b"\r"
+    } else {
+        b"\r\n"
+    }
+}
+
+fn trim_line_breaks(raw: &[u8]) -> &[u8] {
+    let end = raw.iter().rposition(|b| *b != b'\r' && *b != b'\n').map_or(0, |i| i + 1);
+    &raw[..end]
+}
+
+fn sort_rows(input: &Path, id: &str, options: &Options) -> Result<PathBuf> {
+    let order = options.get("order").map(String::as_str).or_else(|| id.strip_prefix(SORT)?.strip_prefix('.')).unwrap_or("asc");
+    let descending = match order {
+        "asc" => false,
+        "desc" => true,
+        other => return Err(EngineError::InvalidOption(format!("unknown sort order `{other}`"))),
+    };
+    let bytes = read_csv(input)?;
+    let mut records = byte_records(&bytes, sniffed_delimiter(&bytes, options)?)?;
+    if records.len() < 2 {
+        return Err(EngineError::Empty("the CSV has no rows to sort".into()));
+    }
+    let (header, header_fields) = records.remove(0);
+    let column = sort_column(&header_fields, options)?;
+    let eol = line_ending(header);
+    // Stable sort: rows with equal keys keep their order.
+    records.sort_by(|(_, a), (_, b)| {
+        let empty: &[u8] = b"";
+        let field = |f: &Vec<Vec<u8>>| f.get(column).map_or(empty, |v| v.as_slice()).to_vec();
+        compare_fields(&field(a), &field(b), descending)
+    });
+    let mut out = Vec::with_capacity(bytes.len() + 2);
+    out.extend_from_slice(trim_line_breaks(header));
+    out.extend_from_slice(eol);
+    for (raw, _) in records {
+        let row = trim_line_breaks(raw);
+        if !row.is_empty() {
+            out.extend_from_slice(row);
+            out.extend_from_slice(eol);
+        }
+    }
+    Ok(write_siblings(input, "csv", vec![("sorted".into(), out)])?.remove(0))
+}
+
+fn change_delimiter(input: &Path, id: &str, options: &Options) -> Result<PathBuf> {
+    let target = delimiter(id, CHANGE_DELIMITER, options)?;
+    let bytes = read_csv(input)?;
+    let source = match options.get("source_delimiter") {
+        Some(raw) => named_delimiter(raw)?,
+        None => sniffed_delimiter(&bytes, &Options::new())?,
+    };
+    let name = |d: u8| DELIMITERS.iter().find(|x| x.1 == d).map_or("comma", |x| x.0);
+    if source == target {
+        return Err(EngineError::InvalidOption(format!("the file already uses {} as its delimiter", name(target))));
+    }
+    let eol = match bytes.iter().position(|b| *b == b'\n' || *b == b'\r') {
+        Some(i) if bytes[i] == b'\r' && bytes.get(i + 1) == Some(&b'\n') => csv::Terminator::CRLF,
+        Some(i) => csv::Terminator::Any(bytes[i]),
+        None => csv::Terminator::CRLF,
+    };
+    let mut reader = csv::ReaderBuilder::new().delimiter(source).has_headers(false).flexible(true).from_reader(&bytes[..]);
+    let mut out = Vec::with_capacity(bytes.len());
+    if bytes.starts_with(b"\xEF\xBB\xBF") {
+        out.extend_from_slice(b"\xEF\xBB\xBF");
+    }
+    let mut writer = csv::WriterBuilder::new().delimiter(target).terminator(eol).flexible(true).from_writer(out);
+    let mut record = csv::ByteRecord::new();
+    while reader.read_byte_record(&mut record)? {
+        writer.write_byte_record(&record)?;
+    }
+    let out = writer.into_inner().map_err(|e| EngineError::Io(e.into_error()))?;
+    Ok(write_siblings(input, "csv", vec![(name(target).into(), out)])?.remove(0))
+}
+
+// ---- split sheets / HTML --------------------------------------------------------------------
+
+/// A sheet's values as a one-sheet XLSX.
+fn range_to_xlsx(name: &str, range: &Range<Data>) -> Result<Vec<u8>> {
+    let mut book = Workbook::new();
+    let sheet = book.add_worksheet();
+    let _ = sheet.set_name(name); // a name Excel rejects (possible from ODS) keeps the default
+    let date = Format::new().set_num_format("yyyy-mm-dd");
+    let stamp = Format::new().set_num_format("yyyy-mm-dd hh:mm:ss");
+    let time = Format::new().set_num_format("hh:mm:ss");
+    let duration = Format::new().set_num_format("[h]:mm:ss");
+    let (row0, col0) = range.start().unwrap_or((0, 0));
+    for (r, row) in range.rows().enumerate() {
+        for (c, cell) in row.iter().enumerate() {
+            let (Ok(r), Ok(c)) = (u32::try_from(r as u64 + u64::from(row0)), u16::try_from(c as u64 + u64::from(col0))) else {
+                return Err(EngineError::InvalidOption("sheet too large".into()));
+            };
+            match cell {
+                Data::Empty => {}
+                Data::Int(i) => {
+                    sheet.write_number(r, c, *i as f64)?;
+                }
+                Data::Float(f) => {
+                    sheet.write_number(r, c, *f)?;
+                }
+                Data::Bool(b) => {
+                    sheet.write_boolean(r, c, *b)?;
+                }
+                Data::String(s) => {
+                    sheet.write_string(r, c, s)?;
+                }
+                Data::DateTime(dt) => {
+                    let serial = dt.as_f64();
+                    let format = if dt.is_duration() {
+                        &duration
+                    } else if serial < 1.0 {
+                        &time
+                    } else if serial.fract() == 0.0 {
+                        &date
+                    } else {
+                        &stamp
+                    };
+                    sheet.write_number_with_format(r, c, serial, format)?;
+                }
+                other => {
+                    sheet.write_string(r, c, cell_text(other))?; // ISO dates/durations, errors
+                }
+            }
+        }
+    }
+    sheet.autofit();
+    Ok(book.save_to_buffer()?)
+}
+
+fn split_sheets(input: &Path) -> Result<Vec<PathBuf>> {
+    let sheets = data_sheets(input)?;
+    if sheets.len() < 2 {
+        return Err(EngineError::Empty("the workbook has only one sheet with data".into()));
+    }
+    let mut files = Vec::new();
+    for (name, range) in sheets {
+        let bytes = range_to_xlsx(&name, &range)?;
+        files.push((name, bytes));
+    }
+    write_per_sheet(input, "xlsx", files)
+}
+
+fn html_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\n' => out.push_str("<br>"),
+            '\r' => {}
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+fn range_to_html(range: &Range<Data>) -> String {
+    let mut html = String::from("<table>\n");
+    for (i, row) in range.rows().enumerate() {
+        let tag = if i == 0 { "th" } else { "td" };
+        if i == 0 {
+            html.push_str("<thead>\n");
+        } else if i == 1 {
+            html.push_str("<tbody>\n");
+        }
+        html.push_str("<tr>");
+        for cell in row {
+            let numeric = matches!(cell, Data::Int(_) | Data::Float(_)) && i > 0;
+            let class = if numeric { " class=\"n\"" } else { "" };
+            html.push_str(&format!("<{tag}{class}>{}</{tag}>", html_escape(&cell_text(cell))));
+        }
+        html.push_str("</tr>\n");
+        if i == 0 {
+            html.push_str("</thead>\n");
+        }
+    }
+    if range.height() > 1 {
+        html.push_str("</tbody>\n");
+    }
+    html.push_str("</table>\n");
+    html
+}
+
+fn workbook_to_html(input: &Path) -> Result<PathBuf> {
+    let sheets = data_sheets(input)?;
+    if sheets.is_empty() {
+        return Err(EngineError::Empty("the workbook has no data".into()));
+    }
+    let title = input.file_stem().and_then(|s| s.to_str()).unwrap_or("Workbook");
+    let mut body = String::new();
+    for (name, range) in &sheets {
+        if sheets.len() > 1 {
+            body.push_str(&format!("<h2>{}</h2>\n", html_escape(name)));
+        }
+        body.push_str(&range_to_html(range));
+    }
+    let html = format!(
+        "<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n<title>{}</title>\n<style>\n\
+         body {{ font-family: system-ui, sans-serif; margin: 2rem; }}\n\
+         table {{ border-collapse: collapse; margin-bottom: 2rem; }}\n\
+         th, td {{ border: 1px solid #ccc; padding: 0.25rem 0.5rem; text-align: left; vertical-align: top; }}\n\
+         th {{ background: #f3f3f3; }}\n\
+         td.n {{ text-align: right; font-variant-numeric: tabular-nums; }}\n\
+         </style>\n</head>\n<body>\n{body}</body>\n</html>\n",
+        html_escape(title)
+    );
+    Ok(write_siblings(input, "html", vec![("converted".into(), html.into_bytes())])?.remove(0))
+}
+
 impl Converter for SheetConverter {
     fn can_handle(&self, mime: &str) -> bool {
         is_workbook(mime) || mime == CSV
@@ -504,7 +794,7 @@ impl Converter for SheetConverter {
 
     fn operations(&self, mime: &str) -> Vec<Operation> {
         if is_workbook(mime) {
-            vec![with_delimiters(TO_CSV), catalog::op(TO_JSON)]
+            vec![with_delimiters(TO_CSV), catalog::op(TO_JSON), catalog::op(SPLIT_SHEETS), catalog::op(TO_HTML)]
         } else if mime == CSV {
             let split = [(100, "100 rows"), (1000, "1,000 rows"), (10_000, "10,000 rows")]
                 .into_iter()
@@ -513,7 +803,12 @@ impl Converter for SheetConverter {
             vec![
                 with_delimiters(TO_XLSX),
                 with_delimiters(TO_JSON),
+                with_delimiters(CHANGE_DELIMITER),
                 catalog::op(DEDUPE),
+                catalog::op(SORT).with_children(vec![
+                    Operation::new(&format!("{SORT}.asc"), "A → Z", "ArrowDownAZ"),
+                    Operation::new(&format!("{SORT}.desc"), "Z → A", "ArrowDownZA"),
+                ]),
                 catalog::op(SPLIT_ROWS).with_children(split),
             ]
         } else {
@@ -548,6 +843,18 @@ impl Converter for SheetConverter {
                 out.extend(split_rows(input, rows, options)?);
             }
             Ok(out)
+        } else if is_op(id, SORT) {
+            inputs.iter().map(|input| sort_rows(input, id, options)).collect()
+        } else if is_op(id, CHANGE_DELIMITER) {
+            inputs.iter().map(|input| change_delimiter(input, id, options)).collect()
+        } else if id == SPLIT_SHEETS {
+            let mut out = Vec::new();
+            for input in inputs {
+                out.extend(split_sheets(input)?);
+            }
+            Ok(out)
+        } else if id == TO_HTML {
+            inputs.iter().map(|input| workbook_to_html(input)).collect()
         } else {
             Err(EngineError::UnknownOperation(op.id.clone()))
         }
@@ -730,7 +1037,7 @@ mod tests {
             ],
         );
 
-        let out = run(TO_CSV, &[input.clone()]).unwrap();
+        let out = run(TO_CSV, std::slice::from_ref(&input)).unwrap();
         assert_eq!(out, vec![d.path().join("Budget - Q1.csv"), d.path().join("Budget - Q2.csv")]);
         assert_eq!(
             read(&out[0]),
@@ -919,7 +1226,7 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let input = d.path().join("empty.csv");
         std::fs::write(&input, "").unwrap();
-        let out = run(TO_XLSX, &[input.clone()]).unwrap();
+        let out = run(TO_XLSX, std::slice::from_ref(&input)).unwrap();
         let sheets = read_xlsx(&out[0]);
         assert_eq!(sheets.len(), 1);
         assert!(sheets[0].1.is_empty());
@@ -1000,7 +1307,7 @@ mod tests {
         assert_eq!(std::fs::read_dir(d.path()).unwrap().count(), 2, "no partial outputs");
 
         let missing = d.path().join("missing.csv");
-        assert!(matches!(run(TO_XLSX, &[missing.clone()]), Err(EngineError::InputNotFound(_))));
+        assert!(matches!(run(TO_XLSX, std::slice::from_ref(&missing)), Err(EngineError::InputNotFound(_))));
         assert!(matches!(run(TO_CSV, &[missing]), Err(EngineError::InputNotFound(_))));
     }
 
@@ -1018,15 +1325,17 @@ mod tests {
     #[test]
     fn operations_per_mime_and_foreign_ops() {
         let ids = |m: &str| SheetConverter.operations(m).into_iter().map(|o| o.id).collect::<Vec<_>>();
-        assert_eq!(ids(XLSX), [TO_CSV, TO_JSON]);
-        assert_eq!(ids(XLS), [TO_CSV, TO_JSON]);
-        assert_eq!(ids(ODS), [TO_CSV, TO_JSON]);
-        assert_eq!(ids(CSV), [TO_XLSX, TO_JSON, DEDUPE, SPLIT_ROWS]);
+        for m in [XLSX, XLS, ODS] {
+            assert_eq!(ids(m), [TO_CSV, TO_JSON, SPLIT_SHEETS, TO_HTML]);
+        }
+        assert_eq!(ids(CSV), [TO_XLSX, TO_JSON, CHANGE_DELIMITER, DEDUPE, SORT, SPLIT_ROWS]);
         let kids = |m: &str, i: usize| SheetConverter.operations(m)[i].children.iter().map(|o| o.id.clone()).collect::<Vec<_>>();
         assert_eq!(kids(XLSX, 0), ["sheet.to_csv.comma", "sheet.to_csv.semicolon", "sheet.to_csv.tab"]);
         assert_eq!(kids(CSV, 0), ["sheet.to_xlsx.comma", "sheet.to_xlsx.semicolon", "sheet.to_xlsx.tab"]);
         assert_eq!(kids(CSV, 1), ["sheet.to_json.comma", "sheet.to_json.semicolon", "sheet.to_json.tab"]);
-        assert_eq!(kids(CSV, 3), ["sheet.split_rows.100", "sheet.split_rows.1000", "sheet.split_rows.10000"]);
+        assert_eq!(kids(CSV, 2), ["sheet.change_delimiter.comma", "sheet.change_delimiter.semicolon", "sheet.change_delimiter.tab"]);
+        assert_eq!(kids(CSV, 4), ["sheet.sort.asc", "sheet.sort.desc"]);
+        assert_eq!(kids(CSV, 5), ["sheet.split_rows.100", "sheet.split_rows.1000", "sheet.split_rows.10000"]);
         assert!(kids(XLSX, 1).is_empty());
         assert!(!SheetConverter.can_handle("image/png"));
         let err = run("image.convert.png", &[]).unwrap_err();
@@ -1146,5 +1455,145 @@ mod tests {
         assert_eq!(sniffed_delimiter(b"single", &none).unwrap(), b',');
         let semi = Options::from([("delimiter".to_string(), "semicolon".to_string())]);
         assert_eq!(sniffed_delimiter(b"a,b", &semi).unwrap(), b';', "the option wins");
+    }
+
+    // ---- sort / change delimiter ------------------------------------------------------
+
+    #[test]
+    fn sort_orders_numbers_text_and_empties() {
+        let d = tempfile::tempdir().unwrap();
+        let input = d.path().join("s.csv");
+        std::fs::write(&input, "\u{feff}k,v\r\nbanana,1\r\n10,2\r\n,3\r\nApple,4\r\n9,5\r\n\"multi\nline\",6\r\napple,7").unwrap();
+        let asc = run("sheet.sort.asc", std::slice::from_ref(&input)).unwrap().remove(0);
+        assert_eq!(asc, d.path().join("s (sorted).csv"));
+        assert_eq!(read(&asc), "\u{feff}k,v\r\n9,5\r\n10,2\r\nApple,4\r\napple,7\r\nbanana,1\r\n\"multi\nline\",6\r\n,3\r\n");
+        let desc = run("sheet.sort.desc", std::slice::from_ref(&input)).unwrap().remove(0);
+        assert_eq!(read(&desc), "\u{feff}k,v\r\n\"multi\nline\",6\r\nbanana,1\r\napple,7\r\nApple,4\r\n10,2\r\n9,5\r\n,3\r\n");
+    }
+
+    #[test]
+    fn sort_column_by_name_or_number() {
+        let d = tempfile::tempdir().unwrap();
+        let input = d.path().join("p.csv");
+        std::fs::write(&input, "name;age\nAnn;31\nBob;007\nCy;-2.5\n").unwrap();
+        for col in ["age", "AGE", "2"] {
+            let out = run_with("sheet.sort.asc", std::slice::from_ref(&input), &[("column", col)]).unwrap().remove(0);
+            assert_eq!(read(&out), "name;age\nCy;-2.5\nBob;007\nAnn;31\n", "{col}");
+        }
+        let out = run_with("sheet.sort", std::slice::from_ref(&input), &[("order", "desc")]).unwrap().remove(0);
+        assert_eq!(read(&out), "name;age\nCy;-2.5\nBob;007\nAnn;31\n");
+        for (k, v) in [("column", "3"), ("column", "height"), ("order", "up")] {
+            assert!(matches!(run_with("sheet.sort", std::slice::from_ref(&input), &[(k, v)]), Err(EngineError::InvalidOption(_))), "{v}");
+        }
+        let header_only = d.path().join("h.csv");
+        std::fs::write(&header_only, "a,b\n").unwrap();
+        assert!(matches!(run("sheet.sort.asc", &[header_only]), Err(EngineError::Empty(_))));
+    }
+
+    #[test]
+    fn change_delimiter_requotes_and_keeps_bom_and_line_endings() {
+        let d = tempfile::tempdir().unwrap();
+        let input = d.path().join("c.csv");
+        std::fs::write(&input, "\u{feff}a,b\r\n\"x,y\",z;w\r\n\"q \"\"t\"\"\",\r\n").unwrap();
+        let out = run("sheet.change_delimiter.semicolon", std::slice::from_ref(&input)).unwrap().remove(0);
+        assert_eq!(out, d.path().join("c (semicolon).csv"));
+        assert_eq!(read(&out), "\u{feff}a;b\r\nx,y;\"z;w\"\r\n\"q \"\"t\"\"\";\r\n");
+
+        let lf = d.path().join("lf.csv");
+        std::fs::write(&lf, "a;b\n1;2\n").unwrap();
+        let out = run("sheet.change_delimiter.tab", std::slice::from_ref(&lf)).unwrap().remove(0);
+        assert_eq!(read(&out), "a\tb\n1\t2\n");
+        let out = run_with("sheet.change_delimiter", std::slice::from_ref(&lf), &[("delimiter", ","), ("source_delimiter", "comma")]);
+        assert!(matches!(out, Err(EngineError::InvalidOption(_))), "same as the (forced) source");
+        assert!(matches!(run("sheet.change_delimiter.semicolon", &[lf]), Err(EngineError::InvalidOption(_))), "already semicolons");
+    }
+
+    // ---- split sheets / HTML ----------------------------------------------------------
+
+    #[test]
+    fn split_sheets_writes_one_xlsx_per_sheet() {
+        let d = tempfile::tempdir().unwrap();
+        let input = d.path().join("Book.xlsx");
+        let date = Format::new().set_num_format("yyyy-mm-dd");
+        xlsx_fixture(
+            &input,
+            &[
+                ("Q1", &|ws| {
+                    ws.write(0, 0, "Item").unwrap();
+                    ws.write(1, 0, "Rent").unwrap();
+                    ws.write(1, 1, 1200.5).unwrap();
+                    ws.write(2, 2, true).unwrap();
+                    ws.write_number_with_format(3, 0, 45306.0, &date).unwrap();
+                }),
+                ("Blank", &|_| {}),
+                ("Q2", &|ws| {
+                    ws.write(2, 3, "late").unwrap();
+                }),
+            ],
+        );
+        let out = run(SPLIT_SHEETS, &[input]).unwrap();
+        assert_eq!(out, vec![d.path().join("Book - Q1.xlsx"), d.path().join("Book - Q2.xlsx")]);
+        let (name, q1) = read_xlsx(&out[0]).remove(0);
+        assert_eq!(name, "Q1");
+        assert_eq!(q1.get_value((1, 1)), Some(&Data::Float(1200.5)));
+        assert_eq!(q1.get_value((2, 2)), Some(&Data::Bool(true)));
+        assert!(matches!(q1.get_value((3, 0)), Some(Data::DateTime(dt)) if dt.as_f64() == 45306.0), "dates stay dates");
+        let (_, q2) = read_xlsx(&out[1]).remove(0);
+        assert_eq!(q2.start(), Some((2, 3)), "cells keep their position");
+        assert_eq!(q2.get_value((2, 3)), Some(&Data::String("late".into())));
+
+        let single = d.path().join("single.xlsx");
+        xlsx_fixture(&single, &[("Only", &|ws| {
+            ws.write(0, 0, 1).unwrap();
+        })]);
+        assert!(matches!(run(SPLIT_SHEETS, &[single]), Err(EngineError::Empty(_))));
+    }
+
+    #[test]
+    fn split_sheets_reads_xls() {
+        let d = tempfile::tempdir().unwrap();
+        let input = d.path().join("old.xls");
+        xls_fixture(&input, &[("A", vec![(0, 0, XlsCell::Text("x"))]), ("B", vec![(0, 0, XlsCell::Number(2.0))])]);
+        let out = run(SPLIT_SHEETS, &[input]).unwrap();
+        assert_eq!(out, vec![d.path().join("old - A.xlsx"), d.path().join("old - B.xlsx")]);
+        assert_eq!(read_xlsx(&out[1])[0].1.get_value((0, 0)), Some(&Data::Float(2.0)));
+    }
+
+    #[test]
+    fn workbook_to_html_has_a_table_per_sheet() {
+        let d = tempfile::tempdir().unwrap();
+        let input = d.path().join("r&d.xlsx");
+        xlsx_fixture(
+            &input,
+            &[
+                ("Costs <2024>", &|ws| {
+                    ws.write(0, 0, "Item").unwrap();
+                    ws.write(0, 1, "Cost").unwrap();
+                    ws.write(1, 0, "A & \"B\"\nnext").unwrap();
+                    ws.write(1, 1, 3.5).unwrap();
+                }),
+                ("Notes", &|ws| {
+                    ws.write(0, 0, "just a header").unwrap();
+                }),
+            ],
+        );
+        let out = run(TO_HTML, &[input]).unwrap().remove(0);
+        assert_eq!(out, d.path().join("r&d (converted).html"));
+        let html = read(&out);
+        assert!(html.starts_with("<!DOCTYPE html>") && html.contains("<title>r&amp;d</title>"));
+        assert!(html.contains("<h2>Costs &lt;2024&gt;</h2>") && html.contains("<h2>Notes</h2>"));
+        assert!(html.contains("<thead>\n<tr><th>Item</th><th>Cost</th></tr>\n</thead>"));
+        assert!(html.contains("<tr><td>A &amp; &quot;B&quot;<br>next</td><td class=\"n\">3.5</td></tr>"));
+        assert_eq!(html.matches("<table>").count(), 2);
+        assert_eq!(html.matches("<tbody>").count(), html.matches("</tbody>").count());
+
+        let ods = d.path().join("one.ods");
+        ods_fixture(&ods, r#"<table:table table:name="S"><table:table-row><table:table-cell office:value-type="string"><text:p>h</text:p></table:table-cell></table:table-row></table:table>"#);
+        let html = read(&run(TO_HTML, &[ods]).unwrap()[0]);
+        assert!(!html.contains("<h2>"), "one sheet: no heading");
+
+        let empty = d.path().join("empty.xlsx");
+        xlsx_fixture(&empty, &[("A", &|_| {})]);
+        assert!(matches!(run(TO_HTML, &[empty]), Err(EngineError::Empty(_))));
     }
 }

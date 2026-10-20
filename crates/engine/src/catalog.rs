@@ -116,7 +116,6 @@ pub const IMAGE_MENU: &[Entry] = &[
     e("image.upscale", "Upscale", "ZoomIn", 70, Optimize),
     e("pdf.from_images", "To PDF", "FileText", 80, Convert).multi(0).batch(),
     e("image.edit", "Edit", "SlidersHorizontal", 90, Edit),
-    e("image.erase_object", "Object eraser", "Eraser", 100, Edit),
     e("image.strip_metadata", "Strip metadata", "EyeOff", 110, Security),
     e("image.watermark", "Watermark", "Stamp", 120, Edit),
     DUPLICATE,
@@ -237,7 +236,7 @@ mod tests {
             // "To PDF" is a batch op: it joins the list in `Registry::operations_for`.
             assert_eq!(
                 more(png),
-                ["Rotate / flip", "Grayscale", "Upscale", "Edit", "Object eraser", "Strip metadata", "Watermark", "Duplicate"]
+                ["Rotate / flip", "Grayscale", "Upscale", "Edit", "Strip metadata", "Watermark", "Duplicate"]
             );
         }
         for word in [DOCX, DOC] {

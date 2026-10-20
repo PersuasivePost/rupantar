@@ -1654,7 +1654,7 @@ mod tests {
         let png = d.path().join("p.png");
         RgbImage::new(2, 2).save(&png).unwrap();
         let pdf = make_pdf(&d.path().join("ok.pdf"), "P", 1, 0);
-        assert!(matches!(run("pdf.rotate.90", &[png.clone()]), Err(EngineError::UnsupportedFormat(_))));
+        assert!(matches!(run("pdf.rotate.90", std::slice::from_ref(&png)), Err(EngineError::UnsupportedFormat(_))));
         assert!(matches!(run("pdf.from_images.a4", &[png, pdf.clone()]), Err(EngineError::UnsupportedFormat(_))));
         assert!(matches!(run("pdf.split", &[d.path().join("missing.pdf")]), Err(EngineError::InputNotFound(_))));
         assert!(matches!(run("pdf.to_png.72", &[pdf]), Err(EngineError::ToolMissing(t)) if t == "pdfium"));

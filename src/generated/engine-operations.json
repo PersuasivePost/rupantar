@@ -462,7 +462,7 @@
         "priority": 30
       },
       {
-        "available": false,
+        "available": true,
         "group": "pages",
         "icon": "Split",
         "id": "sheet.split",
@@ -486,7 +486,7 @@
         "priority": 60
       },
       {
-        "available": false,
+        "available": true,
         "group": "convert",
         "icon": "Globe",
         "id": "sheet.to_html",
@@ -656,7 +656,7 @@
         "priority": 30
       },
       {
-        "available": false,
+        "available": true,
         "group": "pages",
         "icon": "Split",
         "id": "sheet.split",
@@ -672,7 +672,7 @@
         "priority": 50
       },
       {
-        "available": false,
+        "available": true,
         "group": "convert",
         "icon": "Globe",
         "id": "sheet.to_html",
@@ -858,7 +858,7 @@
         "priority": 30
       },
       {
-        "available": false,
+        "available": true,
         "group": "pages",
         "icon": "Split",
         "id": "sheet.split",
@@ -882,7 +882,7 @@
         "priority": 60
       },
       {
-        "available": false,
+        "available": true,
         "group": "convert",
         "icon": "Globe",
         "id": "sheet.to_html",
@@ -1139,14 +1139,6 @@
         "priority": 90
       },
       {
-        "available": false,
-        "group": "edit",
-        "icon": "Eraser",
-        "id": "image.erase_object",
-        "label": "Object eraser",
-        "priority": 100
-      },
-      {
         "available": true,
         "group": "security",
         "icon": "EyeOff",
@@ -1336,14 +1328,6 @@
         "id": "image.edit",
         "label": "Edit",
         "priority": 90
-      },
-      {
-        "available": false,
-        "group": "edit",
-        "icon": "Eraser",
-        "id": "image.erase_object",
-        "label": "Object eraser",
-        "priority": 100
       },
       {
         "available": true,
@@ -1537,14 +1521,6 @@
         "priority": 90
       },
       {
-        "available": false,
-        "group": "edit",
-        "icon": "Eraser",
-        "id": "image.erase_object",
-        "label": "Object eraser",
-        "priority": 100
-      },
-      {
         "available": true,
         "group": "security",
         "icon": "EyeOff",
@@ -1627,7 +1603,27 @@
         "priority": 20
       },
       {
-        "available": false,
+        "available": true,
+        "children": [
+          {
+            "available": true,
+            "icon": "Columns3",
+            "id": "sheet.change_delimiter.comma",
+            "label": "Comma"
+          },
+          {
+            "available": true,
+            "icon": "Columns3",
+            "id": "sheet.change_delimiter.semicolon",
+            "label": "Semicolon"
+          },
+          {
+            "available": true,
+            "icon": "ArrowRightToLine",
+            "id": "sheet.change_delimiter.tab",
+            "label": "Tab"
+          }
+        ],
         "group": "data",
         "icon": "Columns3",
         "id": "sheet.change_delimiter",
@@ -1651,7 +1647,21 @@
         "priority": 50
       },
       {
-        "available": false,
+        "available": true,
+        "children": [
+          {
+            "available": true,
+            "icon": "ArrowDownAZ",
+            "id": "sheet.sort.asc",
+            "label": "A → Z"
+          },
+          {
+            "available": true,
+            "icon": "ArrowDownZA",
+            "id": "sheet.sort.desc",
+            "label": "Z → A"
+          }
+        ],
         "group": "data",
         "icon": "ArrowDownAZ",
         "id": "sheet.sort",

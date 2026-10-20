@@ -391,12 +391,12 @@ mod tests {
         let md = d.path().join("a.md");
         std::fs::write(&md, "# hi").unwrap();
         let none = converter(None, None);
-        assert!(matches!(run(&none, "doc.to_docx", &[md.clone()]), Err(EngineError::ToolMissing(t)) if t == "pandoc"));
+        assert!(matches!(run(&none, "doc.to_docx", std::slice::from_ref(&md)), Err(EngineError::ToolMissing(t)) if t == "pandoc"));
         let exe = std::env::current_exe().unwrap();
         let no_typst = converter(Some(exe), None);
-        assert!(matches!(run(&no_typst, "doc.to_pdf", &[md.clone()]), Err(EngineError::ToolMissing(t)) if t == "typst"));
+        assert!(matches!(run(&no_typst, "doc.to_pdf", std::slice::from_ref(&md)), Err(EngineError::ToolMissing(t)) if t == "typst"));
 
-        let err = run(&none, "doc.to_odt", &[md.clone()]).unwrap_err();
+        let err = run(&none, "doc.to_odt", std::slice::from_ref(&md)).unwrap_err();
         assert_eq!(err.to_string(), "invalid option: Markdown can't be converted to ODT");
         assert!(matches!(run(&none, "doc.to_md", &[d.path().join("x.md")]), Err(EngineError::InputNotFound(_))));
         let png = png(d.path(), "p.png");
