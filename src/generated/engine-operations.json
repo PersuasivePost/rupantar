@@ -188,10 +188,25 @@
       },
       {
         "available": true,
+        "children": [
+          {
+            "available": true,
+            "icon": "LayoutTemplate",
+            "id": "pdf.to_docx.layout",
+            "label": "Keep layout",
+            "pack": "office"
+          },
+          {
+            "available": true,
+            "icon": "TextCursorInput",
+            "id": "pdf.to_docx.text",
+            "label": "Editable text"
+          }
+        ],
         "group": "convert",
         "icon": "FileType",
         "id": "pdf.to_docx",
-        "label": "To Word (text)",
+        "label": "To Word",
         "priority": 20
       },
       {
@@ -419,6 +434,92 @@
         "id": "pdf.ocr",
         "label": "OCR",
         "priority": 130
+      },
+      {
+        "available": true,
+        "group": "file",
+        "icon": "Copy",
+        "id": "copy",
+        "label": "Duplicate",
+        "more": true,
+        "priority": 900
+      }
+    ],
+    "application/rtf": [
+      {
+        "available": true,
+        "group": "convert",
+        "icon": "FileText",
+        "id": "doc.to_pdf",
+        "label": "To PDF",
+        "pack": "office",
+        "priority": 10
+      },
+      {
+        "available": true,
+        "group": "convert",
+        "icon": "FileType",
+        "id": "doc.to_docx",
+        "label": "To Word",
+        "pack": "office",
+        "priority": 15
+      },
+      {
+        "available": false,
+        "group": "convert",
+        "icon": "FileCode",
+        "id": "doc.to_md",
+        "label": "To Markdown",
+        "priority": 20
+      },
+      {
+        "available": false,
+        "group": "convert",
+        "icon": "Globe",
+        "id": "doc.to_html",
+        "label": "To HTML",
+        "priority": 30
+      },
+      {
+        "available": false,
+        "group": "optimize",
+        "icon": "Minimize2",
+        "id": "doc.compress",
+        "label": "Compress",
+        "priority": 40
+      },
+      {
+        "available": false,
+        "group": "extract",
+        "icon": "Images",
+        "id": "doc.extract_images",
+        "label": "Extract images",
+        "priority": 50
+      },
+      {
+        "available": true,
+        "group": "convert",
+        "icon": "FilePen",
+        "id": "doc.to_odt",
+        "label": "To ODT",
+        "pack": "office",
+        "priority": 60
+      },
+      {
+        "available": false,
+        "group": "convert",
+        "icon": "BookOpen",
+        "id": "doc.to_epub",
+        "label": "To EPUB",
+        "priority": 70
+      },
+      {
+        "available": false,
+        "group": "extract",
+        "icon": "Text",
+        "id": "doc.to_text",
+        "label": "To text",
+        "priority": 80
       },
       {
         "available": true,
@@ -985,6 +1086,7 @@
         "icon": "FileText",
         "id": "doc.to_pdf",
         "label": "To PDF",
+        "pack": "office",
         "priority": 10
       },
       {
@@ -1045,6 +1147,7 @@
         "icon": "FilePen",
         "id": "doc.to_odt",
         "label": "To ODT",
+        "pack": "office",
         "priority": 60
       },
       {

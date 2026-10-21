@@ -49,17 +49,21 @@ fn name(path: &Path) -> String {
     path.file_name().map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned())
 }
 
-/// A finished run, if nobody is looking at the radial window.
-pub fn succeeded(app: &AppHandle, label: &str, outputs: &[PathBuf]) {
+/// A finished run, if nobody is looking at the radial window. `engine` (debug builds) is added
+/// to the text, so a run that went through the wrong converter shows.
+pub fn succeeded(app: &AppHandle, label: &str, outputs: &[PathBuf], engine: Option<&str>) {
     let Some(first) = outputs.first() else { return };
     *app.state::<LastResult>().0.lock().unwrap() = Some(first.clone());
     if !radial_hidden(app) {
         return;
     }
-    let body = match outputs {
+    let mut body = match outputs {
         [one] => name(one),
         many => format!("{} files, starting with {}", many.len(), name(&many[0])),
     };
+    if let Some(engine) = engine {
+        body.push_str(&format!("\nvia {engine}"));
+    }
     show(app, format!("{label} finished"), body, Some(first));
 }
 

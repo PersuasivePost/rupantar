@@ -3,9 +3,10 @@
 //!
 //! Operation ids are `doc.to_<format>`: `doc.to_md`, `doc.to_docx`, `doc.to_html`, `doc.to_odt`,
 //! `doc.to_epub`, `doc.to_pdf`, `doc.to_slides` (PowerPoint), `doc.to_text` (plain text, `.txt`).
-//! Offered: DOCX -> MD / HTML / ODT / EPUB / PDF / text, MD -> DOCX / HTML / EPUB / PDF /
-//! slides / text, HTML -> MD / DOCX / PDF / text. Every operation is listed but marked
-//! unavailable when pandoc is missing; PDF also needs typst.
+//! Offered: DOCX -> MD / HTML / EPUB / text, MD -> DOCX / HTML / EPUB / PDF / slides / text,
+//! HTML -> MD / DOCX / PDF / text. Every operation is listed but marked unavailable when pandoc
+//! is missing; PDF also needs typst. DOCX -> PDF / ODT is never done here: pandoc drops the page
+//! layout (headers, floating images, shapes), so those go through LibreOffice (`libreoffice`).
 //!
 //! DOCX -> MD extracts embedded images into a `name_media` folder next to the output (pandoc
 //! nests them as `name_media/media/…`) and the Markdown links to them relatively; the folder is
@@ -52,7 +53,8 @@ impl Format {
 
     fn targets(self) -> &'static [Format] {
         match self {
-            Docx => &[Markdown, Html, Odt, Epub, Pdf, Text],
+            // Not PDF or ODT: those keep the page layout, which pandoc drops (LibreOffice does them).
+            Docx => &[Markdown, Html, Epub, Text],
             Markdown => &[Docx, Html, Epub, Pdf, Pptx, Text],
             Html => &[Markdown, Docx, Pdf, Text],
             Odt | Epub | Pdf | Pptx | Text => &[],
@@ -370,7 +372,7 @@ mod tests {
     fn operations_per_input_type() {
         let c = converter(None, None);
         let ids = |m: &str| c.operations(m).into_iter().map(|o| o.id).collect::<Vec<_>>();
-        assert_eq!(ids(DOCX), ["doc.to_md", "doc.to_html", "doc.to_odt", "doc.to_epub", "doc.to_pdf", "doc.to_text"]);
+        assert_eq!(ids(DOCX), ["doc.to_md", "doc.to_html", "doc.to_epub", "doc.to_text"], "no PDF / ODT: LibreOffice's");
         assert_eq!(
             ids(MARKDOWN),
             ["doc.to_docx", "doc.to_html", "doc.to_epub", "doc.to_pdf", "doc.to_slides", "doc.to_text"]
@@ -567,12 +569,14 @@ mod tests {
     }
 
     #[test]
-    fn docx_to_odt_and_epubs_from_mixed_inputs() {
+    fn epubs_from_mixed_inputs_and_no_layout_formats_from_docx() {
         let Some(c) = real() else { return };
         let d = tempfile::tempdir().unwrap();
         let input = docx(&c, d.path());
-        let odt = run(&c, "doc.to_odt", std::slice::from_ref(&input)).unwrap();
-        assert_eq!(zip_text(&odt[0], "mimetype"), "application/vnd.oasis.opendocument.text");
+        for id in ["doc.to_odt", "doc.to_pdf"] {
+            let err = run(&c, id, std::slice::from_ref(&input)).unwrap_err();
+            assert!(matches!(err, EngineError::InvalidOption(_)), "{id}: {err}");
+        }
 
         let md = d.path().join("other.md");
         std::fs::write(&md, "# Other\n").unwrap();
@@ -596,7 +600,7 @@ mod tests {
     }
 
     #[test]
-    fn md_and_docx_to_pdf_via_typst() {
+    fn md_to_pdf_via_typst() {
         let Some(c) = real() else { return };
         if c.typst.is_none() {
             eprintln!("skipping: typst not found");
@@ -604,8 +608,9 @@ mod tests {
         }
         let d = tempfile::tempdir().unwrap();
         let md = markdown(d.path(), "print.md");
-        let docx = docx(&c, d.path());
-        let out = run(&c, "doc.to_pdf", &[md, docx]).unwrap();
+        let html = d.path().join("page.html");
+        std::fs::write(&html, "<h1>Page</h1><p>Text</p>").unwrap();
+        let out = run(&c, "doc.to_pdf", &[md, html]).unwrap();
         for pdf in &out {
             let bytes = std::fs::read(pdf).unwrap();
             assert!(bytes.starts_with(b"%PDF-") && bytes.len() > 1000, "{pdf:?}");

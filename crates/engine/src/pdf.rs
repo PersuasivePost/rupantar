@@ -10,8 +10,11 @@
 //!   background; `name (page N).png`, or `name (converted).png` for a one-page PDF. Unavailable
 //!   (listed, not rendered by the menu) when pdfium isn't found.
 //! - `pdf.to_pptx` (pages rendered at 150 DPI, one per slide, deck built by pandoc; slides take
-//!   the first page's aspect ratio) and `pdf.to_docx` ("To Word (text)": text structure rebuilt
-//!   from the layout, then pandoc). Both need pdfium and pandoc.
+//!   the first page's aspect ratio; needs pdfium and pandoc).
+//! - `pdf.to_docx.<layout|text>` ("To Word", option `mode`; the bare id is `text`):
+//!   `layout` keeps every line, image and shape where it was, through LibreOffice's PDF import
+//!   (Office pack, `libreoffice::pdf_to_docx`); `text` rebuilds editable structure (headings,
+//!   lists, paragraphs) from pdfium's text layout and has pandoc write it, without images.
 //! - Batch: `pdf.merge` (two or more PDFs, in selection order, next to the first) and
 //!   `pdf.from_images.<a4|original>` (images, one per page, option `fit`). A4 picks portrait or
 //!   landscape to match each image, keeps a 0.5" margin and only ever shrinks; original size
@@ -66,7 +69,8 @@ enum Action {
     Text { markdown: bool },
     /// pdfium + pandoc.
     ToPptx,
-    ToDocx,
+    /// `layout`: LibreOffice; else pdfium + pandoc.
+    ToDocx { layout: bool },
 }
 
 /// Image recompression for `pdf.compress`: images larger than `max_side` px are downsampled,
@@ -164,7 +168,11 @@ fn parse_action(id: &str, options: &Options) -> Result<Action> {
             Ok(Action::Watermark(text))
         }
         ["pdf", "to_pptx"] => Ok(Action::ToPptx),
-        ["pdf", "to_docx"] => Ok(Action::ToDocx),
+        ["pdf", "to_docx", rest @ ..] => match options.get("mode").map(String::as_str).or(rest.first().copied()).unwrap_or("text") {
+            "layout" => Ok(Action::ToDocx { layout: true }),
+            "text" => Ok(Action::ToDocx { layout: false }),
+            other => Err(invalid("mode", other)),
+        },
         ["pdf", "to_text", rest @ ..] => match value(options, "format", rest)?.as_ref() {
             "txt" => Ok(Action::Text { markdown: false }),
             "md" => Ok(Action::Text { markdown: true }),
@@ -1241,6 +1249,8 @@ fn to_docx_text(library: &Path, pandoc: &Path, timeout: std::time::Duration, inp
 pub struct PdfConverter {
     pdfium: Option<PathBuf>,
     pandoc: Option<PathBuf>,
+    /// LibreOffice from the Office pack, for PDF -> Word keeping the layout.
+    soffice: Option<PathBuf>,
     timeout: std::time::Duration,
 }
 
@@ -1249,6 +1259,7 @@ impl PdfConverter {
         Self {
             pdfium: config.pdfium_path.clone().filter(|p| p.is_file()),
             pandoc: config.pandoc_path.clone().filter(|p| crate::tools::is_executable(p)),
+            soffice: config.soffice_path.clone(),
             timeout: config.tool_timeout,
         }
     }
@@ -1327,7 +1338,11 @@ impl Converter for PdfConverter {
                 .with_children(vec![op("pdf.to_text.txt", "Plain text", "Text"), op("pdf.to_text.md", "Markdown", "FileCode")])
                 .available(render),
             catalog::op("pdf.to_pptx").available(render && self.pandoc.is_some()),
-            catalog::op("pdf.to_docx").available(render && self.pandoc.is_some()),
+            // Available as a parent: "Keep layout" offers the Office pack when it's missing.
+            catalog::op("pdf.to_docx").with_children(vec![
+                op("pdf.to_docx.layout", "Keep layout", "LayoutTemplate").available(self.soffice.is_some()).needs_pack(crate::libreoffice::PACK),
+                op("pdf.to_docx.text", "Editable text", "TextCursorInput").available(render && self.pandoc.is_some()),
+            ]),
         ]
     }
 
@@ -1346,6 +1361,10 @@ impl Converter for PdfConverter {
     }
 
     fn run(&self, op: &Operation, inputs: &[PathBuf], options: &Options) -> Result<Vec<PathBuf>> {
+        self.run_job(op, inputs, options, &crate::Job::default())
+    }
+
+    fn run_job(&self, op: &Operation, inputs: &[PathBuf], options: &Options, job: &crate::Job) -> Result<Vec<PathBuf>> {
         let action = parse_action(&op.id, options)?; // validate before touching any file
         match &action {
             Action::FromImages { .. } => check_inputs(inputs, &IMAGE_MIMES)?,
@@ -1379,7 +1398,26 @@ impl Converter for PdfConverter {
                 let (pdfium, pandoc) = self.office_tools()?;
                 inputs.iter().map(|i| to_pptx(pdfium, pandoc, self.timeout, i)).collect()
             }
-            Action::ToDocx => {
+            Action::ToDocx { layout: true } => {
+                let soffice = self.soffice.as_deref().ok_or_else(|| EngineError::PackMissing(crate::libreoffice::PACK.into()))?;
+                job.note("LibreOffice");
+                let mut out = Vec::new();
+                for input in inputs {
+                    let written = crate::libreoffice::pdf_to_docx(soffice, self.timeout, input)
+                        .and_then(|docx| crate::write_siblings(input, "docx", vec![("converted".into(), docx)]));
+                    match written {
+                        Ok(files) => out.extend(files),
+                        Err(e) => {
+                            for f in &out {
+                                let _ = std::fs::remove_file(f);
+                            }
+                            return Err(e);
+                        }
+                    }
+                }
+                Ok(out)
+            }
+            Action::ToDocx { layout: false } => {
                 let (pdfium, pandoc) = self.office_tools()?;
                 inputs.iter().map(|i| to_docx_text(pdfium, pandoc, self.timeout, i)).collect()
             }
@@ -1682,12 +1720,24 @@ mod tests {
                 ("pdf.watermark".into(), true),
                 ("pdf.to_text".into(), false),
                 ("pdf.to_pptx".into(), false),
-                ("pdf.to_docx".into(), false),
+                ("pdf.to_docx".into(), true),
             ]
         );
+        let word = |c: &PdfConverter| {
+            let op = c.operations(PDF).into_iter().find(|o| o.id == "pdf.to_docx").unwrap();
+            op.children.into_iter().map(|o| (o.id, o.available, o.pack)).collect::<Vec<_>>()
+        };
+        let office = Some("office".to_string());
+        assert_eq!(word(&without), [("pdf.to_docx.layout".into(), false, office.clone()), ("pdf.to_docx.text".into(), false, None)]);
         let exe = std::env::current_exe().unwrap();
-        let with = PdfConverter::new(&EngineConfig { pdfium_path: Some(exe.clone()), pandoc_path: Some(exe), ..EngineConfig::default() });
+        let with = PdfConverter::new(&EngineConfig {
+            pdfium_path: Some(exe.clone()),
+            pandoc_path: Some(exe.clone()),
+            soffice_path: Some(exe),
+            ..EngineConfig::default()
+        });
         assert!(with.operations(PDF).iter().all(|o| o.available));
+        assert_eq!(word(&with), [("pdf.to_docx.layout".into(), true, office), ("pdf.to_docx.text".into(), true, None)]);
         assert!(without.operations("image/png").is_empty());
 
         let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
@@ -2084,8 +2134,10 @@ mod tests {
         let Some(c) = office() else { return };
         let d = tempfile::tempdir().unwrap();
         let input = report_pdf(&d.path().join("report.pdf"));
-        let out = run_with(&c, "pdf.to_docx", &[input], &[]).unwrap().remove(0);
+        let out = run_with(&c, "pdf.to_docx.text", std::slice::from_ref(&input), &[]).unwrap().remove(0);
         assert_eq!(out, d.path().join("report (converted).docx"));
+        let bare = run_with(&c, "pdf.to_docx", &[input], &[]).unwrap().remove(0);
+        assert_eq!(bare, d.path().join("report (converted 2).docx"), "the bare id is the text mode");
         let body = zip_entry(&out, "word/document.xml");
         assert!(body.contains(r#"<w:pStyle w:val="Heading1" />"#) && body.contains("Annual Report"), "{body}");
         assert!(body.contains("is continued on the second line."));

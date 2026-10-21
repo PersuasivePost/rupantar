@@ -61,10 +61,11 @@ export const THIRD_PARTY: ThirdParty[] = [
     version: "26.2.6",
     license: "MPL-2.0",
     url: "https://www.libreoffice.org",
-    use: "Word, Excel and PowerPoint conversions. Only present if you install the Office pack.",
+    use: "Word, Excel and PowerPoint conversions, and PDF to Word keeping the layout. Only present if you install the Office pack.",
     note:
       "The Office pack is an official, unmodified LibreOffice build downloaded from documentfoundation.org, " +
-      "only after you agree. It installs its own license file and third-party notices. " +
+      "only after you agree. It installs its own license file and third-party notices (its PDF import " +
+      "includes Poppler, GPL). " +
       "Source code: https://www.libreoffice.org/about-us/source-code/",
     texts: [{ title: "Mozilla Public License 2.0", text: mpl2 }],
     notices: "office",

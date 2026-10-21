@@ -12,6 +12,7 @@ pub const CSV: &str = "text/csv";
 pub const DOCX: &str = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 pub const DOC: &str = "application/msword";
 pub const ODT: &str = "application/vnd.oasis.opendocument.text";
+pub const RTF: &str = "application/rtf";
 pub const PPTX: &str = "application/vnd.openxmlformats-officedocument.presentationml.presentation";
 pub const PPT: &str = "application/vnd.ms-powerpoint";
 pub const ODP: &str = "application/vnd.oasis.opendocument.presentation";
@@ -29,6 +30,7 @@ const BY_EXTENSION: &[(&str, &str)] = &[
     ("docx", DOCX),
     ("doc", DOC),
     ("odt", ODT),
+    ("rtf", RTF),
     ("pptx", PPTX),
     ("ppt", PPT),
     ("odp", ODP),
@@ -60,6 +62,8 @@ fn sniff(head: &[u8]) -> Option<&'static str> {
         Some("image/webp")
     } else if head.starts_with(b"%PDF-") {
         Some(PDF)
+    } else if head.starts_with(b"{\\rtf") {
+        Some(RTF)
     } else {
         None
     }
@@ -114,6 +118,7 @@ mod tests {
         assert_eq!(detect(&file(d.path(), "x.txt", b"%PDF-1.7")), "application/pdf");
         assert_eq!(detect(&file(d.path(), "y.png", b"RIFF\0\0\0\0WEBPVP8 ")), "image/webp");
         assert_eq!(detect(&file(d.path(), "z.bin", &[0xFF, 0xD8, 0xFF, 0xE0])), "image/jpeg");
+        assert_eq!(detect(&file(d.path(), "letter.doc", b"{\\rtf1\\ansi hello}")), RTF, "Word saves RTF as .doc too");
     }
 
     #[test]

@@ -171,16 +171,16 @@ function withAvailability(ops: Operation[]): Operation[] {
     if (pack === "office") return !mockTools.office || (id === "slides.to_images" && !mockTools.pdfium);
     if (pack === "ai") return !mockTools.ai;
     return (id.startsWith("doc.") && !/^doc\.(extract_images|compress)/.test(id) && !mockTools.pandoc) ||
-      (/^pdf\.to_(pptx|docx)$/.test(id) && !mockTools.pandoc) ||
+      (/^pdf\.to_(pptx|docx\.text)$/.test(id) && !mockTools.pandoc) ||
       (id === "doc.to_pdf" && !mockTools.typst) ||
-      (/^pdf\.to_(image|png|jpg|text|pptx|docx)/.test(id) && !mockTools.pdfium);
+      (/^pdf\.to_(image|png|jpg|text|pptx|docx\.text)/.test(id) && !mockTools.pdfium);
   };
   // The snapshot is taken with every tool present, so `available: false` there means planned.
   return ops.map((o) => ({
     ...o,
     available: (showPlanned || o.available !== false) && !needs(o.id, o.pack),
-    // Like the engine: Office ops wait under More until their pack is there.
-    ...(o.pack === "office" && !mockTools.office && { more: true }),
+    // Like the engine: Office ops wait under More until their pack is there, except "To PDF".
+    ...(o.pack === "office" && !mockTools.office && !o.id.endsWith(".to_pdf") && { more: true }),
     ...(o.children && { children: withAvailability(o.children) }),
   }));
 }

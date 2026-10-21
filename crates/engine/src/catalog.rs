@@ -13,7 +13,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::mime::{CSV, DOC, DOCX, HTML, MARKDOWN, ODP, ODS, ODT, PDF, PPT, PPTX, XLS, XLSX};
+use crate::mime::{CSV, DOC, DOCX, HTML, MARKDOWN, ODP, ODS, ODT, PDF, PPT, PPTX, RTF, XLS, XLSX};
 use crate::Operation;
 
 /// What an operation does, for grouping in the UI.
@@ -100,7 +100,7 @@ const DUPLICATE: Entry = e("copy", "Duplicate", "Copy", 900, File).in_more();
 pub const PDF_MENU: &[Entry] = &[
     e("pdf.merge", "Merge", "Merge", 5, Pages).multi(0).batch(),
     e("pdf.compress", "Compress", "Minimize2", 10, Optimize),
-    e("pdf.to_docx", "To Word (text)", "FileType", 20, Convert),
+    e("pdf.to_docx", "To Word", "FileType", 20, Convert),
     e("pdf.to_image", "To image", "FileImage", 30, Convert),
     e("pdf.split", "Split", "Scissors", 40, Pages),
     e("pdf.rotate", "Rotate", "RotateCw", 50, Pages),
@@ -195,7 +195,7 @@ pub const MARKUP_MENU: &[Entry] = &[
 pub const MENUS: &[(&[&str], &[Entry])] = &[
     (&[PDF], PDF_MENU),
     (&["image/png", "image/jpeg", "image/webp"], IMAGE_MENU),
-    (&[DOCX, DOC, ODT], WORD_MENU),
+    (&[DOCX, DOC, ODT, RTF], WORD_MENU),
     (&[XLSX, XLS, ODS], EXCEL_MENU),
     (&[PPTX, PPT, ODP], POWERPOINT_MENU),
     (&[CSV], CSV_MENU),
@@ -239,7 +239,7 @@ mod tests {
         let more = |mime: &str| labels(mime)[5..].to_vec();
         let top = |mime: &str| labels(mime)[..5].to_vec();
 
-        assert_eq!(top(PDF), ["Compress", "To Word (text)", "To image", "Split", "Rotate"]);
+        assert_eq!(top(PDF), ["Compress", "To Word", "To image", "Split", "Rotate"]);
         assert_eq!(
             more(PDF),
             ["Extract", "To PowerPoint", "To Excel", "To text", "Watermark", "Page numbers", "Protect / unlock", "OCR", "Duplicate"]
@@ -255,7 +255,7 @@ mod tests {
         // No conversion to the file's own type (DOCX -> Word, ODT -> ODT, XLSX -> Excel, ...).
         assert_eq!(top(DOCX), ["To PDF", "To Markdown", "To HTML", "Compress", "Extract images"]);
         assert_eq!(more(DOCX), ["To ODT", "To EPUB", "To text", "Duplicate"]);
-        for word in [DOC, ODT] {
+        for word in [DOC, ODT, RTF] {
             assert_eq!(top(word), ["To PDF", "To Word", "To Markdown", "To HTML", "Compress"]);
         }
         assert_eq!(more(DOC), ["Extract images", "To ODT", "To EPUB", "To text", "Duplicate"]);

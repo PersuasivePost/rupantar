@@ -13,6 +13,8 @@ use serde::{Deserialize, Serialize};
 pub mod ai;
 pub mod catalog;
 pub mod copy;
+#[cfg(test)]
+mod fidelity;
 pub mod documents;
 pub mod images;
 pub mod libreoffice;
@@ -343,8 +345,8 @@ impl Registry {
     /// Registry with every built-in converter, using the tools in `config`.
     pub fn with_config(config: &EngineConfig) -> Self {
         let mut r = Self::new();
-        // First: it takes over DOCX -> PDF / ODT from pandoc once installed, and owns
-        // `sheet.to_xlsx` for workbooks (the sheet converter's is CSV only).
+        // First: it owns every page-layout conversion (DOCX -> PDF / ODT included: never pandoc)
+        // and `sheet.to_xlsx` for workbooks (the sheet converter's is CSV only).
         r.register(Box::new(libreoffice::LibreOfficeConverter::new(config)));
         r.register(Box::new(images::ImageConverter));
         r.register(Box::new(ai::AiConverter::new(config)));
@@ -374,7 +376,8 @@ impl Registry {
                 Operation { priority: Some(entry.priority), ..op }
             })
             .collect();
-        // Two converters may implement one id (DOCX -> PDF: LibreOffice, else pandoc); the first wins.
+        // Two converters may implement one id (`sheet.to_xlsx`: LibreOffice for workbooks, the
+        // sheet converter for CSV); the first wins.
         let mut seen: Vec<String> = ops.iter().map(|o| o.id.clone()).collect();
         implemented.retain(|o| {
             let new = !seen.contains(&o.id);
@@ -440,7 +443,7 @@ impl Registry {
     }
 
     /// [`Registry::run_for`], also reporting which converter ran (e.g. DOCX -> PDF:
-    /// "LibreOffice" when the Office pack is installed, else "pandoc").
+    /// "LibreOffice"; MD -> PDF: "pandoc"; PDF -> Word keeping layout: "PDF (LibreOffice)").
     pub fn run_traced(&self, mimes: &[String], op: &Operation, inputs: &[PathBuf], options: &Options) -> Result<Run> {
         self.run_job(mimes, op, inputs, options, &Job::default())
     }
@@ -741,9 +744,14 @@ mod tests {
         let pack = |ops: &[Operation], id: &str| ops.iter().find(|o| o.id == id).map(|o| (o.available, o.pack.clone()));
         let doc = r.operations(mime::DOC);
         assert_eq!(pack(&doc, "doc.to_pdf"), Some((false, Some("office".into()))));
-        // DOCX -> PDF is pandoc's without the pack (not flagged); with a DOC it needs the pack.
+        // Layout formats never fall back to pandoc: DOCX -> PDF / ODT need the pack too, and
+        // "To PDF" keeps its wedge while the rest wait under More.
         let docx = r.operations(mime::DOCX);
-        assert_eq!(pack(&docx, "doc.to_pdf"), Some((false, None)), "pandoc/typst missing too");
+        for id in ["doc.to_pdf", "doc.to_odt"] {
+            assert_eq!(pack(&docx, id), Some((false, Some("office".into()))), "{id}");
+        }
+        let more = |ops: &[Operation], id: &str| ops.iter().find(|o| o.id == id).unwrap().more;
+        assert!(!more(&docx, "doc.to_pdf") && more(&docx, "doc.to_odt"));
         let mixed = r.operations_for(&mimes(&[mime::DOCX, mime::DOC]));
         assert_eq!(pack(&mixed, "doc.to_pdf"), Some((false, Some("office".into()))));
         assert_eq!(ids(&docx).iter().filter(|id| **id == "doc.to_pdf").count(), 1, "listed once");
@@ -754,7 +762,7 @@ mod tests {
         std::fs::write(&b, b"x").unwrap();
         let op = Operation::new("doc.to_pdf", "", "");
         let err = r.run_for(&mimes(&[mime::DOCX]), &op, &[a], &Options::new()).unwrap_err();
-        assert!(matches!(err, EngineError::ToolMissing(_)), "falls through to pandoc: {err}");
+        assert!(matches!(err, EngineError::PackMissing(_)), "never pandoc: {err}");
         let err = r.run_for(&mimes(&[mime::DOC]), &op, &[b], &Options::new()).unwrap_err();
         assert!(matches!(err, EngineError::PackMissing(_)), "{err}");
     }
@@ -874,7 +882,7 @@ mod tests {
     fn frontend_operation_snapshot_is_current() {
         let r = all_tools();
         let mimes = [
-            mime::PDF, mime::DOCX, mime::DOC, mime::ODT, mime::MARKDOWN, mime::HTML, "image/png", "image/jpeg",
+            mime::PDF, mime::DOCX, mime::DOC, mime::ODT, mime::RTF, mime::MARKDOWN, mime::HTML, "image/png", "image/jpeg",
             "image/webp", mime::XLSX, mime::XLS, mime::ODS, mime::CSV, mime::PPTX, mime::PPT, mime::ODP,
             mime::UNKNOWN,
         ];

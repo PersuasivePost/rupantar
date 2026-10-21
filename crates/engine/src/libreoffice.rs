@@ -1,7 +1,7 @@
 //! Office formats through LibreOffice (the optional "Office pack"), run headless.
 //!
 //! Operations (top level, no sub-options):
-//! - Word (DOCX / DOC / ODT): `doc.to_pdf`, `doc.to_docx`, `doc.to_odt`
+//! - Word (DOCX / DOC / ODT / RTF): `doc.to_pdf`, `doc.to_docx`, `doc.to_odt`
 //! - Excel (XLSX / XLS / ODS): `sheet.to_pdf`, `sheet.to_xlsx`, `sheet.to_ods`
 //! - PowerPoint (PPTX / PPT / ODP): `slides.to_pdf`, `slides.to_pptx`, `slides.to_odp`, and
 //!   `slides.to_images` (PDF via LibreOffice, then every slide rendered to PNG at 150 DPI with
@@ -9,11 +9,13 @@
 //!
 //! A conversion to the file's own type is never offered. Outputs are `name (converted).ext`.
 //!
-//! Without the pack these are listed with `pack: "office"`, `available: false` and `more` (the
-//! menu offers the download, under More), and running one is `PackMissing`. Exception: DOCX -> PDF / ODT
-//! also exist through pandoc, so for DOCX this converter offers them only once LibreOffice is
-//! installed (it then takes over: better layout fidelity) and otherwise leaves them to
-//! `documents`.
+//! Page-layout formats never go through pandoc to PDF or ODF: pandoc drops headers, floating
+//! images, shapes and positions. Without the pack these are listed with `pack: "office"` and
+//! `available: false` (the menu offers the download), and running one is `PackMissing`. "To
+//! PDF" keeps its place in the menu ("To PDF, needs Office pack"); the others wait under More.
+//!
+//! Also here: [`pdf_to_docx`], PDF -> Word keeping the layout (the PDF converter's
+//! `pdf.to_docx.layout`).
 //!
 //! Each run copies the input into a private work dir as `document.<ext>` (odd file names can't
 //! confuse LibreOffice's argument parsing), uses a fresh user profile there (no shared state, no
@@ -27,7 +29,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use crate::documents::WorkDir;
-use crate::mime::{self, DOC, DOCX, ODP, ODS, ODT, PPT, PPTX, XLS, XLSX};
+use crate::mime::{self, DOC, DOCX, ODP, ODS, ODT, PPT, PPTX, RTF, XLS, XLSX};
 use crate::{catalog, tools, write_siblings, Converter, EngineConfig, EngineError, Operation, Options, Result};
 
 /// The pack these operations need (`Operation::pack`).
@@ -72,6 +74,7 @@ fn family(mime: &str) -> Option<(&'static [Target], &'static str)> {
         DOCX => (TEXT, "docx"),
         DOC => (TEXT, "doc"),
         ODT => (TEXT, "odt"),
+        RTF => (TEXT, "rtf"),
         XLSX => (SHEETS, "xlsx"),
         XLS => (SHEETS, "xls"),
         ODS => (SHEETS, "ods"),
@@ -80,11 +83,6 @@ fn family(mime: &str) -> Option<(&'static [Target], &'static str)> {
         ODP => (SLIDES, "odp"),
         _ => return None,
     })
-}
-
-/// Operations another converter also implements for this type (pandoc, for DOCX).
-fn has_fallback(mime: &str, id: &str) -> bool {
-    mime == DOCX && matches!(id, "doc.to_pdf" | "doc.to_odt")
 }
 
 pub struct LibreOfficeConverter {
@@ -101,48 +99,7 @@ impl LibreOfficeConverter {
     /// Converts `input` (of type `mime`) with `filter`; returns the output's path in `work`.
     fn convert(&self, soffice: &Path, work: &WorkDir, input: &Path, mime: &str, target_ext: &str, filter: &str) -> Result<PathBuf> {
         let (_, in_ext) = family(mime).ok_or_else(|| EngineError::UnsupportedFormat(mime.to_string()))?;
-        let in_dir = work.0.join("in");
-        let out_dir = work.0.join("out");
-        std::fs::create_dir_all(&in_dir)?;
-        let source = in_dir.join(format!("document.{in_ext}"));
-        std::fs::copy(input, &source)?;
-        let args: Vec<OsString> = vec![
-            "--headless".into(),
-            "--invisible".into(),
-            "--norestore".into(),
-            "--nologo".into(),
-            "--nolockcheck".into(),
-            "--nodefault".into(),
-            "--nofirststartwizard".into(),
-            format!("-env:UserInstallation={}", file_url(&work.0.join("profile"))).into(),
-            "--convert-to".into(),
-            filter.into(),
-            "--outdir".into(),
-            out_dir.clone().into(),
-            source.into(),
-        ];
-        let mut stderr = String::new();
-        for attempt in 0..2 {
-            match tools::run(TOOL, soffice, &args, Some(&work.0), self.timeout) {
-                Err(EngineError::ToolFailed { status, .. }) if status == EXIT_RESTART && attempt == 0 => continue,
-                Err(e) => return Err(e),
-                Ok(err) => {
-                    stderr = err;
-                    break;
-                }
-            }
-        }
-        let output = out_dir.join(format!("document.{target_ext}"));
-        if output.is_file() {
-            return Ok(output);
-        }
-        let detail = tools::readable(&stderr);
-        let detail = if detail == "no error output" {
-            "it could not open the file (it may be damaged, password-protected or not really this type)".to_string()
-        } else {
-            detail
-        };
-        Err(EngineError::ToolFailed { tool: TOOL.into(), status: "no output".into(), stderr: detail })
+        convert(soffice, self.timeout, work, input, in_ext, None, target_ext, filter)
     }
 
     fn run_one(&self, soffice: &Path, id: &str, input: &Path) -> Result<Vec<PathBuf>> {
@@ -175,14 +132,171 @@ impl LibreOfficeConverter {
     }
 }
 
-/// Until the pack is installed its operations go under More, so they never take a top wedge
-/// from something that works now.
-fn waiting(op: Operation, installed: bool) -> Operation {
-    if installed {
-        op
-    } else {
-        op.in_more()
+/// Converts `input` (read as `document.<in_ext>`, with import filter `infilter` if given) with
+/// export `filter`; returns the output's path in `work` (`out/document.<target_ext>`). Several
+/// calls can share one work dir (and its profile): each copies its input in afresh.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn convert(
+    soffice: &Path,
+    timeout: Duration,
+    work: &WorkDir,
+    input: &Path,
+    in_ext: &str,
+    infilter: Option<&str>,
+    target_ext: &str,
+    filter: &str,
+) -> Result<PathBuf> {
+    let in_dir = work.0.join("in");
+    let out_dir = work.0.join("out");
+    std::fs::create_dir_all(&in_dir)?;
+    let source = in_dir.join(format!("document.{in_ext}"));
+    std::fs::copy(input, &source)?;
+    let mut args: Vec<OsString> = vec![
+        "--headless".into(),
+        "--invisible".into(),
+        "--norestore".into(),
+        "--nologo".into(),
+        "--nolockcheck".into(),
+        "--nodefault".into(),
+        "--nofirststartwizard".into(),
+        format!("-env:UserInstallation={}", file_url(&work.0.join("profile"))).into(),
+    ];
+    if let Some(f) = infilter {
+        args.push(format!("--infilter={f}").into());
     }
+    args.extend(["--convert-to".into(), filter.into(), "--outdir".into(), out_dir.clone().into(), source.into()]);
+    let mut stderr = String::new();
+    for attempt in 0..2 {
+        match tools::run(TOOL, soffice, &args, Some(&work.0), timeout) {
+            Err(EngineError::ToolFailed { status, .. }) if status == EXIT_RESTART && attempt == 0 => continue,
+            Err(e) => return Err(e),
+            Ok(err) => {
+                stderr = err;
+                break;
+            }
+        }
+    }
+    let output = out_dir.join(format!("document.{target_ext}"));
+    if output.is_file() {
+        return Ok(output);
+    }
+    let detail = tools::readable(&stderr);
+    let detail = if detail == "no error output" {
+        "it could not open the file (it may be damaged, password-protected or not really this type)".to_string()
+    } else {
+        detail
+    };
+    Err(EngineError::ToolFailed { tool: TOOL.into(), status: "no output".into(), stderr: detail })
+}
+
+/// PDF -> Word keeping the layout; returns the DOCX's bytes. LibreOffice's PDF import
+/// (`writer_pdf_import`) places every text line, image and filled shape at its position on the
+/// page. Two steps, PDF -> ODT -> DOCX: exporting the imported document to DOCX directly shifts
+/// everything by the page margins. Then [`restack`] fixes the drawing order, which LibreOffice's
+/// DOCX export loses for filled shapes (they would cover the text in front of them).
+pub(crate) fn pdf_to_docx(soffice: &Path, timeout: Duration, input: &Path) -> Result<Vec<u8>> {
+    if !has_pdf_import(soffice) {
+        return Err(EngineError::ToolMissing(
+            "LibreOffice's PDF import (this Office pack was installed without it: remove the Office pack in Settings and download it again)"
+                .into(),
+        ));
+    }
+    let work = WorkDir::create()?;
+    let odt = convert(soffice, timeout, &work, input, "pdf", Some("writer_pdf_import"), "odt", "odt:writer8")?;
+    let docx = convert(soffice, timeout, &work, &odt, "odt", None, "docx", TEXT[1].filter)?;
+    restack_docx(&std::fs::read(docx)?)
+}
+
+/// Whether this LibreOffice can open PDFs: its PDF import helper sits next to the program
+/// (`program/` on Linux and Windows, `Contents/MacOS` on macOS). Office packs installed before
+/// the import was kept on Linux lack it. Symlinks are followed (`/usr/bin/soffice` in tests).
+fn has_pdf_import(soffice: &Path) -> bool {
+    let program = std::fs::canonicalize(soffice).unwrap_or_else(|_| soffice.to_path_buf());
+    program.with_file_name(format!("xpdfimport{}", std::env::consts::EXE_SUFFIX)).is_file()
+}
+
+/// [`restack`] applied to `word/document.xml` of a DOCX; every other part is copied as is.
+fn restack_docx(docx: &[u8]) -> Result<Vec<u8>> {
+    use std::io::{Cursor, Read, Write};
+    let bad = |e: zip::result::ZipError| EngineError::ToolFailed { tool: TOOL.into(), status: "unreadable output".into(), stderr: e.to_string() };
+    let mut zip = zip::ZipArchive::new(Cursor::new(docx)).map_err(bad)?;
+    let mut out = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    for i in 0..zip.len() {
+        let mut entry = zip.by_index(i).map_err(bad)?;
+        if entry.name().map_err(bad)? == "word/document.xml" {
+            let mut xml = String::new();
+            entry.read_to_string(&mut xml)?;
+            let options = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+            out.start_file("word/document.xml", options).map_err(bad)?;
+            out.write_all(restack(&xml).as_bytes())?;
+        } else {
+            out.raw_copy_file(entry).map_err(bad)?;
+        }
+    }
+    Ok(out.finish().map_err(bad)?.into_inner())
+}
+
+/// Puts the drawing objects of an imported PDF back in their stacking order. LibreOffice writes
+/// text boxes and images as DrawingML anchors (`relativeHeight`), but filled shapes as legacy
+/// VML (`<w:pict>`) with no `z-index`, so readers draw those last, over the text. The objects
+/// are written front to back, so each gets a height from its position: the anchor's
+/// `relativeHeight` and the VML shape's `z-index` (negative: behind text, like the anchors'
+/// `behindDoc="1"`; the imported page has no flowing text, only these objects).
+pub(crate) fn restack(xml: &str) -> String {
+    const AC: (&str, &str) = ("<mc:AlternateContent>", "</mc:AlternateContent>");
+    const PICT: (&str, &str) = ("<w:pict>", "</w:pict>");
+    let mut spans = Vec::new();
+    let mut at = 0;
+    loop {
+        let next = [AC, PICT].into_iter().filter_map(|(open, close)| Some((xml[at..].find(open)? + at, close))).min_by_key(|(i, _)| *i);
+        let Some((start, close)) = next else { break };
+        let Some(end) = xml[start..].find(close).map(|i| start + i + close.len()) else { break };
+        spans.push((start, end));
+        at = end;
+    }
+    let mut out = String::with_capacity(xml.len() + spans.len() * 16);
+    let mut last = 0;
+    for (i, &(start, end)) in spans.iter().enumerate() {
+        let height = spans.len() - i;
+        out.push_str(&xml[last..start]);
+        out.push_str(&set_vml_z(&set_attr(&xml[start..end], "relativeHeight", &height.to_string()), -(height as i64)));
+        last = end;
+    }
+    out.push_str(&xml[last..]);
+    out
+}
+
+/// Every `name="…"` in `xml` set to `value`.
+fn set_attr(xml: &str, name: &str, value: &str) -> String {
+    let key = format!(" {name}=\"");
+    let mut out = String::with_capacity(xml.len());
+    let mut rest = xml;
+    while let Some(i) = rest.find(&key) {
+        let from = i + key.len();
+        let Some(len) = rest[from..].find('"') else { break };
+        out.push_str(&rest[..from]);
+        out.push_str(value);
+        rest = &rest[from + len..];
+    }
+    out.push_str(rest);
+    out
+}
+
+/// The first VML shape in `xml` (not a `v:shapetype`) with `z-index` in its style set to `z`.
+fn set_vml_z(xml: &str, z: i64) -> String {
+    let mut from = 0;
+    while let Some(i) = xml[from..].find("<v:").map(|i| from + i) {
+        from = i + 3;
+        if xml[i..].starts_with("<v:shapetype") {
+            continue;
+        }
+        let Some(tag_end) = xml[i..].find('>').map(|e| i + e) else { break };
+        let Some(style) = xml[i..tag_end].find(" style=\"").map(|s| i + s + 8) else { break };
+        let Some(style_end) = xml[style..tag_end].find('"').map(|e| style + e) else { break };
+        let kept: Vec<&str> = xml[style..style_end].split(';').filter(|p| !p.trim_start().starts_with("z-index:") && !p.is_empty()).collect();
+        return format!("{}{};z-index:{z}{}", &xml[..style], kept.join(";"), &xml[style_end..]);
+    }
+    xml.to_string()
 }
 
 /// A `file://` URL for a local path (LibreOffice's `-env:UserInstallation` wants one).
@@ -211,24 +325,20 @@ impl Converter for LibreOfficeConverter {
     fn operations(&self, mime: &str) -> Vec<Operation> {
         let Some((targets, _)) = family(mime) else { return Vec::new() };
         let installed = self.soffice.is_some();
+        // Until the pack is installed its operations go under More, so they never take a top
+        // wedge from something that works now. "To PDF" is the exception: it is what most
+        // people want from these files, so it stays put, offering the download.
+        let waiting = |op: Operation, id: &str| if installed || id.ends_with(".to_pdf") { op } else { op.in_more() };
         let mut ops: Vec<Operation> = targets
             .iter()
             .filter(|t| t.mime != mime)
-            .filter(|t| installed || !has_fallback(mime, t.id))
-            .map(|t| {
-                let op = catalog::op(t.id).available(installed);
-                if has_fallback(mime, t.id) {
-                    op
-                } else {
-                    waiting(op.needs_pack(PACK), installed)
-                }
-            })
+            .map(|t| waiting(catalog::op(t.id).available(installed).needs_pack(PACK), t.id))
             .collect();
         if targets.as_ptr() == SLIDES.as_ptr() {
             let op = catalog::op(TO_IMAGES);
-            ops.push(match (installed, self.pdfium.is_some()) {
-                (_, false) => op.available(false), // no renderer: the pack wouldn't help
-                (installed, true) => waiting(op.available(installed).needs_pack(PACK), installed),
+            ops.push(match self.pdfium.is_some() {
+                false => op.available(false), // no renderer: the pack wouldn't help
+                true => waiting(op.available(installed).needs_pack(PACK), TO_IMAGES),
             });
         }
         ops
@@ -239,13 +349,7 @@ impl Converter for LibreOfficeConverter {
         if id != TO_IMAGES && ![TEXT, SHEETS, SLIDES].iter().any(|f| f.iter().any(|t| t.id == id)) {
             return Err(EngineError::UnknownOperation(op.id.clone()));
         }
-        let Some(soffice) = self.soffice.as_deref() else {
-            // Let pandoc have DOCX -> PDF / ODT when every input is a DOCX.
-            if inputs.iter().all(|i| has_fallback(&mime::detect(i), id)) && !inputs.is_empty() {
-                return Err(EngineError::UnknownOperation(op.id.clone()));
-            }
-            return Err(EngineError::PackMissing(PACK.into()));
-        };
+        let Some(soffice) = self.soffice.as_deref() else { return Err(EngineError::PackMissing(PACK.into())) };
         let mut out = Vec::new();
         for input in inputs {
             match self.run_one(soffice, id, input) {
@@ -368,7 +472,10 @@ mod tests {
         let pack = Some(PACK);
         assert_eq!(summary(&c.operations(DOC)), [("doc.to_pdf", false, pack), ("doc.to_docx", false, pack), ("doc.to_odt", false, pack)]);
         assert_eq!(summary(&c.operations(ODT)), [("doc.to_pdf", false, pack), ("doc.to_docx", false, pack)]);
-        assert!(c.operations(DOCX).is_empty(), "DOCX -> PDF / ODT stay with pandoc");
+        assert_eq!(summary(&c.operations(RTF)), summary(&c.operations(DOC)));
+        assert_eq!(summary(&c.operations(DOCX)), [("doc.to_pdf", false, pack), ("doc.to_odt", false, pack)], "never pandoc's");
+        let more: Vec<_> = c.operations(DOCX).into_iter().map(|o| o.more).collect();
+        assert_eq!(more, [false, true], "To PDF keeps its wedge");
         assert_eq!(summary(&c.operations(XLS)), [("sheet.to_pdf", false, pack), ("sheet.to_xlsx", false, pack), ("sheet.to_ods", false, pack)]);
         assert_eq!(summary(&c.operations(XLSX)), [("sheet.to_pdf", false, pack), ("sheet.to_ods", false, pack)]);
         let images = if c.pdfium.is_some() { pack } else { None };
@@ -380,10 +487,11 @@ mod tests {
     }
 
     #[test]
-    fn with_the_pack_ops_are_available_and_docx_switches_over() {
+    fn with_the_pack_ops_are_available() {
         let exe = std::env::current_exe().unwrap(); // only presence is checked
         let c = converter(Some(exe));
-        assert_eq!(summary(&c.operations(DOCX)), [("doc.to_pdf", true, None), ("doc.to_odt", true, None)]);
+        assert_eq!(summary(&c.operations(DOCX)), [("doc.to_pdf", true, Some(PACK)), ("doc.to_odt", true, Some(PACK))]);
+        assert!(c.operations(DOCX).iter().all(|o| !o.more));
         assert_eq!(summary(&c.operations(PPT))[..3], [
             ("slides.to_pdf", true, Some(PACK)),
             ("slides.to_pptx", true, Some(PACK)),
@@ -400,8 +508,41 @@ mod tests {
         assert!(matches!(run(&c, "doc.to_pdf", std::slice::from_ref(&doc)), Err(EngineError::PackMissing(p)) if p == PACK));
         let docx = d.path().join("a.docx");
         std::fs::write(&docx, b"x").unwrap();
-        assert!(matches!(run(&c, "doc.to_pdf", &[docx]), Err(EngineError::UnknownOperation(_))), "pandoc's turn");
+        assert!(matches!(run(&c, "doc.to_pdf", &[docx]), Err(EngineError::PackMissing(_))), "no pandoc fallback");
         assert!(matches!(run(&c, "image.rotate.90", &[doc]), Err(EngineError::UnknownOperation(_))));
+    }
+
+    /// LibreOffice's DOCX of an imported PDF: anchors (front to back) with arbitrary heights,
+    /// then filled shapes as VML without a z-index. Each gets its height from its position.
+    #[test]
+    fn restack_orders_objects_front_to_back() {
+        let anchor = |h: u32, text: &str| {
+            format!(
+                r#"<mc:AlternateContent><mc:Choice Requires="wps"><w:drawing><wp:anchor relativeHeight="{h}" behindDoc="1">{text}</wp:anchor></w:drawing></mc:Choice><mc:Fallback><w:pict><v:shapetype id="t"/><v:shape id="s" style="position:absolute;z-index:7"/></w:pict></mc:Fallback></mc:AlternateContent>"#
+            )
+        };
+        let fill = r##"<w:pict><v:shape id="f" fillcolor="#1c1d21" style="position:absolute;width:9pt"/></w:pict>"##;
+        let xml = format!("<w:body><w:p><w:r>{}{}{fill}</w:r></w:p></w:body>", anchor(62, "Item"), anchor(9, "Logo"));
+        let out = restack(&xml);
+        assert_eq!(
+            out,
+            format!(
+                "<w:body><w:p><w:r>{}{}{}</w:r></w:p></w:body>",
+                anchor(3, "Item").replace("z-index:7", "z-index:-3"),
+                anchor(2, "Logo").replace("z-index:7", "z-index:-2"),
+                fill.replace("width:9pt", "width:9pt;z-index:-1"),
+            )
+        );
+        assert_eq!(restack("<w:body/>"), "<w:body/>");
+    }
+
+    #[test]
+    fn pdf_to_word_without_the_pdf_import_says_how_to_fix_it() {
+        let d = tempfile::tempdir().unwrap();
+        let soffice = d.path().join("soffice.bin");
+        std::fs::write(&soffice, b"x").unwrap();
+        let err = pdf_to_docx(&soffice, Duration::from_secs(1), &d.path().join("a.pdf")).unwrap_err();
+        assert!(matches!(&err, EngineError::ToolMissing(m) if m.contains("download it again")), "{err}");
     }
 
     #[test]
@@ -410,8 +551,8 @@ mod tests {
         assert_eq!(file_url(Path::new(r"C:\Users\x")), "file:///C:/Users/x");
     }
 
-    /// DOCX -> PDF / ODT exist twice; with the pack installed the registry must pick LibreOffice.
-    /// A stand-in `soffice` that always fails shows who ran, without needing LibreOffice.
+    /// DOCX -> PDF / ODT go to LibreOffice even with pandoc and typst present. A stand-in
+    /// `soffice` that always fails shows who ran, without needing LibreOffice.
     #[cfg(unix)]
     #[test]
     fn the_registry_sends_docx_to_libreoffice_once_installed() {
@@ -422,7 +563,13 @@ mod tests {
         std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
         let docx = d.path().join("a.docx");
         std::fs::write(&docx, b"x").unwrap();
-        let registry = crate::Registry::with_config(&EngineConfig { soffice_path: Some(fake), ..EngineConfig::default() });
+        let exe = std::env::current_exe().unwrap();
+        let registry = crate::Registry::with_config(&EngineConfig {
+            soffice_path: Some(fake),
+            pandoc_path: Some(exe.clone()),
+            typst_path: Some(exe),
+            ..EngineConfig::default()
+        });
         for id in ["doc.to_pdf", "doc.to_odt"] {
             let err = registry.run_traced(&[DOCX.to_string()], &Operation::new(id, "", ""), std::slice::from_ref(&docx), &Options::new()).unwrap_err();
             assert!(matches!(&err, EngineError::ToolFailed { tool, .. } if tool == TOOL), "{id}: {err}");
@@ -451,11 +598,9 @@ mod tests {
             let run = with_pack.run_traced(&mimes, &Operation::new(id, "", ""), std::slice::from_ref(&docx), &Options::new()).unwrap();
             assert_eq!(run.engine, "LibreOffice", "{id}");
         }
-        if config.pandoc_path.is_some() && config.typst_path.is_some() {
-            let without = crate::Registry::with_config(&EngineConfig { soffice_path: None, ..config });
-            let run = without.run_traced(&mimes, &Operation::new("doc.to_pdf", "", ""), &[docx], &Options::new()).unwrap();
-            assert_eq!(run.engine, "pandoc");
-        }
+        let without = crate::Registry::with_config(&EngineConfig { soffice_path: None, ..config });
+        let err = without.run_traced(&mimes, &Operation::new("doc.to_pdf", "", ""), &[docx], &Options::new()).unwrap_err();
+        assert!(matches!(err, EngineError::PackMissing(_)), "never pandoc: {err}");
     }
 
     #[test]

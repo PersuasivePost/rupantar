@@ -64,8 +64,8 @@ pub fn list_operations(engine: State<Engine>, mimes: Vec<String>) -> Vec<Operati
 /// Async + `spawn_blocking`: conversions can take seconds and sync commands run on the main
 /// thread, which would freeze the tray and window. File types are detected again here rather
 /// than trusted from the frontend. Each run is logged with the engine that did it (e.g. DOCX ->
-/// PDF: "LibreOffice" once the Office pack is installed, else "pandoc"; Remove background: "AI
-/// (ONNX Runtime on CPU)").
+/// PDF: "LibreOffice"; MD -> PDF: "pandoc"; Remove background: "AI (ONNX Runtime on CPU)"), and
+/// debug builds also put it in the success notification.
 ///
 /// With a `run_id`, progress is emitted as `operation-progress` (throttled) and
 /// `cancel_operation(run_id)` stops the run; it then rejects with `"cancelled"`.
@@ -109,16 +109,16 @@ pub async fn run_operation(
             Ok(run) => eprintln!("rupantar: {} on {} file(s) via {} in {secs:.1} s", op.id, inputs.len(), run.engine),
             Err(e) => eprintln!("rupantar: {} on {} file(s) failed after {secs:.1} s: {e}", op.id, inputs.len()),
         }
-        result.map(|run| run.outputs)
+        result
     })
     .await;
     if let Some(id) = &run_id {
         runs.0.lock().unwrap().remove(id);
     }
     match result.map_err(|e| e.to_string())? {
-        Ok(outputs) => {
-            notify::succeeded(&notifier, &label, &outputs);
-            Ok(outputs)
+        Ok(run) => {
+            notify::succeeded(&notifier, &label, &run.outputs, cfg!(debug_assertions).then_some(run.engine.as_str()));
+            Ok(run.outputs)
         }
         Err(EngineError::Cancelled) => Err("cancelled".into()),
         Err(e) => {

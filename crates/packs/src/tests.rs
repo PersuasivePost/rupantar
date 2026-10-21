@@ -415,6 +415,7 @@ fn installs_the_real_pinned_build() {
     let out = std::process::Command::new(&program).arg("--version").output().unwrap();
     let version = String::from_utf8_lossy(&out.stdout);
     assert!(version.starts_with("LibreOffice 26.2.6"), "{version}");
+    assert!(program.with_file_name("xpdfimport").is_file(), "the PDF import (writer_pdf_import) is installed");
     if let Some(keep) = std::env::var_os("RUPANTAR_LO_KEEP") {
         let _ = fs::remove_dir_all(&keep);
         fs::rename(pack.dir(), &keep).unwrap();

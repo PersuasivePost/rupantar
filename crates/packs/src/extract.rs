@@ -21,10 +21,26 @@ use std::time::Duration;
 use crate::{check, Archive, Component, PackError, Phase, Progress, Result};
 
 /// Debs kept, by component (`libobasis26.2-core_...` → `core`; the bare `libreoffice26.2_...`
-/// is ""). Left out: dictionaries, desktop integration (GNOME/KDE), database, scripting
-/// providers, extensions, online update, help: nothing a headless conversion uses.
-const KEEP: &[&str] =
-    &["", "ure", "core", "writer", "calc", "impress", "draw", "math", "graphicfilter", "images", "ooofonts", "xsltfilter", "en-us"];
+/// is ""). `extension-pdf-import` (`xpdfimport`, 2.5 MB) is what lets LibreOffice open PDFs
+/// (PDF -> Word, keep layout); without it a PDF is read as plain text. Left out: dictionaries,
+/// desktop integration (GNOME/KDE), database, scripting providers, other extensions, online
+/// update, help: nothing a headless conversion uses.
+const KEEP: &[&str] = &[
+    "",
+    "ure",
+    "core",
+    "writer",
+    "calc",
+    "impress",
+    "draw",
+    "math",
+    "graphicfilter",
+    "images",
+    "ooofonts",
+    "xsltfilter",
+    "en-us",
+    "extension-pdf-import",
+];
 
 /// Unpacks `file` (the download of `c`) into `staging`, reporting `Extract` progress in bytes of
 /// `file` read.

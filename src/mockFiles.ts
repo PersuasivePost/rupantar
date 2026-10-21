@@ -5,6 +5,7 @@ export const MIME = {
   docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
   doc: "application/msword",
   odt: "application/vnd.oasis.opendocument.text",
+  rtf: "application/rtf",
   pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
   ppt: "application/vnd.ms-powerpoint",
   odp: "application/vnd.oasis.opendocument.presentation",
@@ -43,7 +44,7 @@ export const SAMPLE_FILES: SampleFile[] = [
 ];
 
 const EXT_MIME: Record<string, string> = {
-  pdf: MIME.pdf, docx: MIME.docx, doc: MIME.doc, odt: MIME.odt, md: MIME.md, markdown: MIME.md, html: MIME.html, htm: MIME.html,
+  pdf: MIME.pdf, docx: MIME.docx, doc: MIME.doc, odt: MIME.odt, rtf: MIME.rtf, md: MIME.md, markdown: MIME.md, html: MIME.html, htm: MIME.html,
   png: MIME.png, jpg: MIME.jpeg, jpeg: MIME.jpeg, webp: MIME.webp,
   xlsx: MIME.xlsx, xls: MIME.xls, ods: MIME.ods, csv: MIME.csv,
   pptx: MIME.pptx, ppt: MIME.ppt, odp: MIME.odp,

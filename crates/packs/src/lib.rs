@@ -160,7 +160,7 @@ pub mod office {
                 217_285_735,
                 Archive::DebTarball
             ),
-            installed_size: 560 * MB,
+            installed_size: 565 * MB,
             tested: true,
         },
         Build {
