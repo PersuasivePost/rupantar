@@ -15,8 +15,11 @@ The one exception is the optional packs below, which download only after you agr
 
 <!-- TODO: replace with a screenshot or GIF of the radial menu (e.g. docs/demo.gif). -->
 ## Screenshots
+WORD -> PDF
+![alt text](ss/Screencastfrom21-10-26095437AMIST-ezgif.com-video-to-gif-converter.gif)
 
-*Screenshot / GIF coming soon.*
+JPEG -> PNG
+![alt text](ss/Screencastfrom21-10-26100052AMIST-ezgif.com-video-to-gif-converter.gif)
 
 ## Install
 
