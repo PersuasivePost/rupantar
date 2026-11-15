@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import { ArrowLeft, Bug, ChevronRight, FileText, Info, Keyboard, Package, Power, Scale, Star, WandSparkles } from "lucide-react";
-import { appInfo, getSettings, openGithub, setAutostart, setShortcut, thirdPartyNotices, type Notice, type PackId, type Settings as SettingsData } from "./api";
+import { ArrowLeft, Bug, Clipboard, ChevronRight, FileText, Info, Keyboard, Package, Power, Scale, Star, WandSparkles } from "lucide-react";
+import { appInfo, debugInfo, getSettings, openGithub, setAutostart, setShortcut, thirdPartyNotices, type Notice, type PackId, type Settings as SettingsData } from "./api";
 import { THIRD_PARTY, type ThirdParty } from "./licenses";
 import { PACK_INFO, formatBytes, progressFraction, progressLabel, usePack } from "./lib/usePack";
 
@@ -55,9 +55,37 @@ export default function Settings() {
   return view === "licenses" ? <Licenses onBack={() => setView("general")} /> : <General onLicenses={() => setView("licenses")} />;
 }
 
+/** Clipboard write; falls back to a hidden textarea when the async API is refused (the user gesture can lapse during the await). */
+async function copyText(text: string): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return;
+  } catch {
+    const area = document.createElement("textarea");
+    area.value = text;
+    area.style.cssText = "position:fixed;opacity:0;pointer-events:none";
+    document.body.append(area);
+    area.select();
+    const ok = document.execCommand("copy");
+    area.remove();
+    if (!ok) throw new Error("copy was refused");
+  }
+}
+
 function About({ onLicenses }: { onLicenses: () => void }) {
   const [info, setInfo] = useState<{ name: string; version: string } | null>(null);
   useEffect(() => { void appInfo().then(setInfo); }, []);
+  const [copied, setCopied] = useState<"ok" | "failed" | null>(null);
+  const copyDebug = async () => {
+    try {
+      await copyText(await debugInfo());
+      setCopied("ok");
+    } catch (e) {
+      console.error(e);
+      setCopied("failed");
+    }
+    window.setTimeout(() => setCopied(null), 2500);
+  };
   return (
     <section className="rounded-xl border p-4" style={panel}>
       <div className="mb-3 flex items-center gap-2 text-sm font-medium"><Info size={16} /> About</div>
@@ -70,6 +98,9 @@ function About({ onLicenses }: { onLicenses: () => void }) {
         </button>
         <button onClick={() => void openGithub("issues")} className={`${button} flex items-center gap-1.5`} style={secondary}>
           <Bug size={14} /> Report an issue
+        </button>
+        <button onClick={() => void copyDebug()} className={`${button} flex items-center gap-1.5`} style={secondary}>
+          <Clipboard size={14} /> {copied === "ok" ? "Copied" : copied === "failed" ? "Copy failed" : "Copy debug info"}
         </button>
         <button onClick={onLicenses} className={`${button} flex items-center gap-1.5`} style={secondary}>
           <Scale size={14} /> Open-source licenses <ChevronRight size={14} />

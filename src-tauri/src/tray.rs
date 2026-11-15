@@ -23,7 +23,7 @@ pub fn build(app: &AppHandle) -> tauri::Result<()> {
             "settings" => shell::open_settings(app),
             "star" => {
                 if let Err(e) = shell::open_link(app, "repo") {
-                    eprintln!("rupantar: could not open GitHub: {e}");
+                    crate::log!("could not open GitHub: {e}");
                 }
             }
             "quit" => app.exit(0),
@@ -43,7 +43,7 @@ pub fn build(app: &AppHandle) -> tauri::Result<()> {
     match icon {
         Ok(icon) => tray = tray.icon(icon),
         Err(e) => {
-            eprintln!("rupantar: could not load the tray icon: {e}");
+            crate::log!("could not load the tray icon: {e}");
             if let Some(icon) = app.default_window_icon() {
                 tray = tray.icon(icon.clone());
             }

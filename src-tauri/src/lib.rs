@@ -1,6 +1,8 @@
 //! Thin Tauri shell: tray, global shortcut, windows. Conversion logic lives in `engine`.
 
+mod applog;
 mod commands;
+mod debuginfo;
 mod notify;
 mod packs;
 mod settings;
@@ -40,6 +42,7 @@ pub fn run() {
             commands::set_autostart,
             commands::app_info,
             commands::open_link,
+            debuginfo::debug_info,
             packs::pack_status,
             packs::install_pack,
             packs::cancel_pack,
@@ -52,10 +55,14 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
 
+            if let Ok(dir) = app.path().app_data_dir() {
+                applog::init(dir.join("logs"));
+            }
+            crate::log!("Rupantar {} starting", app.package_info().version);
             app.handle().plugin(tauri_plugin_global_shortcut::Builder::new().build())?;
             packs::sweep(app.handle());
             if shell::is_elevated() {
-                eprintln!("rupantar: running elevated (administrator); drag-and-drop from Explorer is blocked by Windows");
+                crate::log!("running elevated (administrator); drag-and-drop from Explorer is blocked by Windows");
             }
             app.manage(shell::Shell::new());
             app.manage(commands::Engine::new(shell::engine_config(app.handle())));
@@ -67,13 +74,13 @@ pub fn run() {
             let handle = app.handle();
             let saved = settings::load(handle);
             if let Err(e) = shell::register_shortcut(handle, &saved.shortcut) {
-                eprintln!("rupantar: {e}; falling back to {}", settings::DEFAULT_SHORTCUT);
+                crate::log!("{e}; falling back to {}", settings::DEFAULT_SHORTCUT);
                 if let Err(e) = shell::register_shortcut(handle, settings::DEFAULT_SHORTCUT) {
-                    eprintln!("rupantar: {e}");
+                    crate::log!("{e}");
                 }
             }
             if let Err(e) = shell::apply_autostart(handle, saved.autostart) {
-                eprintln!("rupantar: could not update autostart: {e}");
+                crate::log!("could not update autostart: {e}");
             }
             tray::build(handle)?;
 

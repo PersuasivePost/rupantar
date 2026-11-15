@@ -233,12 +233,18 @@ export async function appInfo(): Promise<AppInfo> {
   return { name: "Rupantar", version: "dev (browser preview)" };
 }
 
+/** Plain-text report (versions, OS, tools, packs, hotkey, recent log) for pasting into an issue. Local only. */
+export async function debugInfo(): Promise<string> {
+  if (isTauri()) return invoke<string>("debug_info");
+  return "Rupantar debug info\nVersion: dev (browser preview)\nOS: browser";
+}
+
 export type GithubPage = "repo" | "issues";
 
 /** Opens the project's GitHub page (the repo, or a new issue) in the default browser. */
 export async function openGithub(page: GithubPage): Promise<void> {
   if (isTauri()) return invoke("open_link", { page });
-  window.open(`https://github.com/PersuasivePost/rupantar${page === "issues" ? "/issues/new" : ""}`, "_blank", "noopener");
+  window.open(`https://github.com/PersuasivePost/rupantar${page === "issues" ? "/issues/new?template=bug_report.yml" : ""}`, "_blank", "noopener");
 }
 
 export const inTauri = (): boolean => isTauri();

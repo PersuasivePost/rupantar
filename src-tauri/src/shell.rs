@@ -179,7 +179,7 @@ fn try_summon(app: &AppHandle, files: Vec<PathBuf>) -> tauri::Result<()> {
 
 pub fn summon(app: &AppHandle, files: Vec<PathBuf>) {
     if let Err(e) = try_summon(app, files) {
-        eprintln!("rupantar: could not show the radial window: {e}");
+        crate::log!("could not show the radial window: {e}");
     }
 }
 
@@ -190,7 +190,7 @@ const REPO_URL: &str = "https://github.com/PersuasivePost/rupantar";
 pub fn open_link(app: &AppHandle, page: &str) -> Result<(), String> {
     let url = match page {
         "repo" => REPO_URL.to_string(),
-        "issues" => format!("{REPO_URL}/issues/new"),
+        "issues" => format!("{REPO_URL}/issues/new?template=bug_report.yml"),
         other => return Err(format!("unknown link: {other}")),
     };
     tauri_plugin_opener::OpenerExt::opener(app).open_url(url, None::<&str>).map_err(|e| e.to_string())
@@ -272,8 +272,8 @@ pub fn engine_config(app: &AppHandle) -> engine::EngineConfig {
         ("Real-ESRGAN (AI pack)", &config.realesrgan_path),
     ] {
         match path {
-            Some(p) => eprintln!("rupantar: using {tool} at {}", p.display()),
-            None => eprintln!("rupantar: {tool} not found; operations that need it are hidden"),
+            Some(p) => crate::log!("using {tool} at {}", p.display()),
+            None => crate::log!("{tool} not found; operations that need it are hidden"),
         }
     }
     config

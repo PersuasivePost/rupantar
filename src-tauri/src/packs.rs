@@ -216,7 +216,7 @@ pub async fn install_pack(app: AppHandle, jobs: State<'_, PackJobs>, engine: Sta
     match result? {
         Ok(files) => {
             let files: BTreeMap<_, _> = files.iter().map(|(k, p)| (k.as_str(), p.display().to_string())).collect();
-            eprintln!("rupantar: {} installed: {files:?}", kind.name());
+            crate::log!("{} installed: {files:?}", kind.name());
             engine.update(|config| apply(&app, config));
             let now = status(&app, &jobs, kind);
             let _ = app.emit(CHANGED_EVENT, &now);

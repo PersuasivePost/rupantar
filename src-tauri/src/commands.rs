@@ -31,6 +31,11 @@ impl Engine {
         Arc::clone(&self.registry.read().unwrap())
     }
 
+    /// A copy of the current configuration (for the debug report).
+    pub fn config(&self) -> EngineConfig {
+        self.config.lock().unwrap().clone()
+    }
+
     /// Changes the configuration (e.g. a pack was installed or removed) and rebuilds the registry.
     pub fn update(&self, change: impl FnOnce(&mut EngineConfig)) {
         let mut config = self.config.lock().unwrap();
@@ -106,8 +111,8 @@ pub async fn run_operation(
         let result = registry.run_job(&mimes, &op, &inputs, &options.unwrap_or_default(), &running);
         let secs = started.elapsed().as_secs_f32();
         match &result {
-            Ok(run) => eprintln!("rupantar: {} on {} file(s) via {} in {secs:.1} s", op.id, inputs.len(), run.engine),
-            Err(e) => eprintln!("rupantar: {} on {} file(s) failed after {secs:.1} s: {e}", op.id, inputs.len()),
+            Ok(run) => crate::log!("{} on {} file(s) via {} in {secs:.1} s", op.id, inputs.len(), run.engine),
+            Err(e) => crate::log!("{} on {} file(s) failed after {secs:.1} s: {e}", op.id, inputs.len()),
         }
         result
     })

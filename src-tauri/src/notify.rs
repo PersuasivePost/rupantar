@@ -35,7 +35,7 @@ pub fn init(app: &AppHandle) {
         let path = named.or_else(|| handle.state::<LastResult>().0.lock().unwrap().clone());
         if let Some(path) = path {
             if let Err(e) = tauri_plugin_opener::reveal_item_in_dir(&path) {
-                eprintln!("rupantar: could not show {} in its folder: {e}", path.display());
+                crate::log!("could not show {} in its folder: {e}", path.display());
             }
         }
     });
@@ -81,6 +81,6 @@ fn show(app: &AppHandle, title: String, body: String, reveal: Option<&PathBuf>) 
         n = n.action_type_id(ACTION_TYPE).extra("path", path.display().to_string());
     }
     if let Err(e) = n.show() {
-        eprintln!("rupantar: could not show a notification: {e}");
+        crate::log!("could not show a notification: {e}");
     }
 }
