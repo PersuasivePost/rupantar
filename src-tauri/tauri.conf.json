@@ -56,7 +56,14 @@
     "externalBin": ["binaries/pandoc", "binaries/typst"],
     "resources": { "resources/pdfium/": "pdfium/" },
     "windows": {
-      "nsis": { "installMode": "currentUser" }
+      "nsis": {
+        "installMode": "currentUser",
+        "headerImage": "installer/header.bmp",
+        "sidebarImage": "installer/sidebar.bmp",
+        "installerIcon": "icons/icon.ico",
+        "languages": ["English", "Hindi"],
+        "customLanguageFiles": { "Hindi": "installer/Hindi.nsh" }
+      }
     }
   }
 }
