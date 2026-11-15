@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { FileDown } from "lucide-react";
 import {
-  describeFiles, frontendReady, hideRadial, listOperations, onFilesDropped, onSummon, pickFiles,
+  appInfo, describeFiles, frontendReady, hideRadial, listOperations, onFilesDropped, onSummon, pickFiles,
   runOperation, setHideOnBlur, type FileBatch, type Operation, type SummonPayload,
 } from "./api";
 import { usePrompt } from "./components/CropDialog";
@@ -23,6 +23,7 @@ const BROWSE_SETTLE_MS = 500;
 export default function RadialHost() {
   const [state, setState] = useState<State>({ kind: "idle" });
   const [dragOver, setDragOver] = useState(false);
+  const [elevated, setElevated] = useState(false);
   const { prompt, element: promptElement, busy: promptBusy } = usePrompt();
   const origin = useRef<Origin>({ x: 300, y: 300 });
   const nextId = useRef(1);
@@ -40,6 +41,10 @@ export default function RadialHost() {
       console.error(e);
       setState({ kind: "await", origin: at }); // unreadable drop: keep waiting
     }
+  }, []);
+
+  useEffect(() => {
+    void appInfo().then((i) => setElevated(!!i.elevated)).catch(() => {});
   }, []);
 
   const stateRef = useRef(state);
@@ -135,7 +140,7 @@ export default function RadialHost() {
   return (
     <AnimatePresence>
       {state.kind === "await" && (
-        <DropTarget key="await" origin={state.origin} active={dragOver} onBrowse={browse} onDismiss={close} />
+        <DropTarget key="await" origin={state.origin} active={dragOver} elevated={elevated} onBrowse={browse} onDismiss={close} />
       )}
       {state.kind === "menu" && (
         <RadialMenu
@@ -158,9 +163,10 @@ export default function RadialHost() {
   );
 }
 
-function DropTarget({ origin, active, onBrowse, onDismiss }: {
+function DropTarget({ origin, active, elevated, onBrowse, onDismiss }: {
   origin: Origin;
   active: boolean;
+  elevated: boolean;
   onBrowse: () => void;
   onDismiss: () => void;
 }) {
@@ -176,6 +182,9 @@ function DropTarget({ origin, active, onBrowse, onDismiss }: {
   return (
     <motion.div
       className="fixed inset-0 z-50 select-none"
+      // Not fully transparent: on Windows, alpha-0 pixels of a transparent window can be
+      // hit-test-transparent, so a drop would land on whatever is behind the window.
+      style={{ background: "rgba(0, 0, 0, 0.01)" }}
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
@@ -212,6 +221,14 @@ function DropTarget({ origin, active, onBrowse, onDismiss }: {
         <span className="relative text-[11px] font-medium">Drop files</span>
         <span className="relative text-[9px]" style={{ color: "var(--text-dim)" }}>or click to browse</span>
       </motion.div>
+      {elevated && (
+        <p
+          className="absolute inset-x-6 text-center text-[11px]"
+          style={{ top: origin.y + size / 2 + 10, color: "var(--text-dim)" }}
+        >
+          Running as administrator: drag-and-drop from Explorer is blocked by Windows
+        </p>
+      )}
     </motion.div>
   );
 }

@@ -54,6 +54,9 @@ pub fn run() {
 
             app.handle().plugin(tauri_plugin_global_shortcut::Builder::new().build())?;
             packs::sweep(app.handle());
+            if shell::is_elevated() {
+                eprintln!("rupantar: running elevated (administrator); drag-and-drop from Explorer is blocked by Windows");
+            }
             app.manage(shell::Shell::new());
             app.manage(commands::Engine::new(shell::engine_config(app.handle())));
             app.manage(commands::Runs::default());

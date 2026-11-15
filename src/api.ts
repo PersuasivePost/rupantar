@@ -223,6 +223,8 @@ function mockPreview(path: string): ImagePreview {
 export interface AppInfo {
   name: string;
   version: string;
+  /** Windows: running as administrator, which makes Windows block drag-and-drop from Explorer. */
+  elevated?: boolean;
 }
 
 /** Name and version of the running app (the browser preview reports a dev placeholder). */

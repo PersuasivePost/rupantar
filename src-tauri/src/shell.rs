@@ -19,6 +19,47 @@ const WINDOW_LOGICAL_SIZE: f64 = 600.0;
 /// Focus often flickers while a window is being shown; ignore blur events this soon after.
 const BLUR_GRACE: Duration = Duration::from_millis(250);
 
+/// Whether this process runs with an elevated (administrator) token. Windows blocks drag-and-drop
+/// from a non-elevated Explorer into an elevated window (UIPI), which shows as the 🚫 cursor.
+/// Always false elsewhere.
+#[cfg(windows)]
+pub fn is_elevated() -> bool {
+    use std::ffi::c_void;
+    #[link(name = "advapi32")]
+    extern "system" {
+        fn OpenProcessToken(process: *mut c_void, access: u32, token: *mut *mut c_void) -> i32;
+        fn GetTokenInformation(
+            token: *mut c_void, class: u32, info: *mut c_void, len: u32, returned: *mut u32,
+        ) -> i32;
+    }
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GetCurrentProcess() -> *mut c_void;
+        fn CloseHandle(handle: *mut c_void) -> i32;
+    }
+    const TOKEN_QUERY: u32 = 0x0008;
+    const TOKEN_ELEVATION: u32 = 20;
+    // SAFETY: plain Win32 calls with valid out-pointers; the token handle is closed before returning.
+    unsafe {
+        let mut token = std::ptr::null_mut();
+        if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) == 0 {
+            return false;
+        }
+        let mut elevation: u32 = 0;
+        let mut returned: u32 = 0;
+        let ok = GetTokenInformation(
+            token, TOKEN_ELEVATION, &mut elevation as *mut u32 as *mut c_void, 4, &mut returned,
+        );
+        CloseHandle(token);
+        ok != 0 && elevation != 0
+    }
+}
+
+#[cfg(not(windows))]
+pub fn is_elevated() -> bool {
+    false
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct Cursor {
     pub x: f64,

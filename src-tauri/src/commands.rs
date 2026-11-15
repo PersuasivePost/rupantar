@@ -287,13 +287,15 @@ pub fn set_autostart(app: AppHandle, enabled: bool) -> Result<Settings, String> 
 pub struct AppInfo {
     pub name: String,
     pub version: String,
+    /// Windows only: running with an administrator token (drag-and-drop from Explorer is blocked).
+    pub elevated: bool,
 }
 
 /// Name and version of the running app (from its package info, for Settings → About).
 #[tauri::command]
 pub fn app_info(app: AppHandle) -> AppInfo {
     let info = app.package_info();
-    AppInfo { name: info.name.clone(), version: info.version.to_string() }
+    AppInfo { name: info.name.clone(), version: info.version.to_string(), elevated: shell::is_elevated() }
 }
 
 /// Opens one of the project's GitHub pages (`repo`, `issues`) in the default browser.
