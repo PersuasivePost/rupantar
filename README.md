@@ -13,8 +13,21 @@ operation and the converted file is written next to the original.
 Everything runs on your machine. There is no telemetry and conversions never touch the network.
 The one exception is the optional packs below, which download only after you agree.
 
-<!-- TODO: replace with a screenshot or GIF of the radial menu (e.g. docs/demo.gif). -->
+## Demo
+
+<!-- TODO: record the hotkey -> drop -> flick -> result loop and save it as docs/demo.gif, then
+     replace this comment with: ![Rupantar demo](docs/demo.gif) -->
+*Demo GIF coming soon.*
+
 ## Screenshots
+
+<!-- TODO: add three screenshots under docs/ and uncomment:
+![The radial menu on a PDF](docs/screenshot-menu.png)
+![The drop target](docs/screenshot-drop.png)
+![Settings](docs/screenshot-settings.png)
+-->
+*Screenshots coming soon.*
+
 WORD -> PDF
 ![alt text](ss/Screencastfrom21-10-26095437AMIST-ezgif.com-video-to-gif-converter.gif)
 
@@ -62,6 +75,70 @@ The macOS builds are **not signed or notarized**, so Gatekeeper blocks the first
 Signing and notarization need a paid Apple Developer account, which this project doesn't have yet.
 Until it does, the steps above are required. Windows installers are unsigned too, so SmartScreen may
 warn ("More info" → "Run anyway").
+
+## FAQ
+
+### Why is there a SmartScreen / Gatekeeper warning?
+
+The installers aren't code-signed: signing needs a paid certificate (an Apple Developer account for
+macOS, a code-signing certificate for Windows), which this project doesn't have yet. The warning
+means "unknown publisher", not "malware found". The code is open and builds in CI; you can also
+[build it yourself](#build-from-source).
+
+- **Windows:** SmartScreen → *More info* → *Run anyway*.
+- **macOS:** right-click Rupantar → *Open* → *Open*, or see
+  [Opening an unsigned app on macOS](#opening-an-unsigned-app-on-macos).
+
+### Why is the dial at the centre of the screen on Wayland?
+
+Wayland doesn't let an app read the cursor position or place its own windows, which is how Rupantar
+puts the dial under your cursor. On Wayland it falls back to the centre of the screen. X11, Windows
+and macOS position it at the cursor. Under Wayland you can try launching with `GDK_BACKEND=x11`
+(XWayland); it may help, but cursor tracking there isn't guaranteed. Global hotkeys can also be
+limited on Wayland; the tray menu always works.
+
+### What do the Office and AI packs download, and where do they go?
+
+Nothing is downloaded unless you agree, and the exact size is shown first. Conversions themselves
+never use the network.
+
+| Pack | What it is | Downloaded from | Size (Linux x64 / Windows x64) |
+| --- | --- | --- | --- |
+| Office | The official LibreOffice build, for DOC/XLS/PPT and Office-quality PDF | `download.documentfoundation.org` (archive mirror as a fallback) | ~730 MB / see the dialog |
+| AI | ONNX Runtime, BiRefNet lite (background removal), Real-ESRGAN (upscaling) | `github.com`, plus `nuget.org` on Windows | ~280 MB / ~480 MB |
+
+Every file is pinned and checked against a SHA-256 before it is unpacked, and a failed download
+resumes where it stopped. Packs live in a `packs` folder inside the app's data directory:
+
+| OS | App data directory |
+| --- | --- |
+| Windows | `%APPDATA%\app.rupantar` |
+| macOS | `~/Library/Application Support/app.rupantar` |
+| Linux | `~/.local/share/app.rupantar` |
+
+You can remove a pack in Settings, or delete its folder (`packs/office`, `packs/ai`).
+
+### How do I uninstall Rupantar and remove its data?
+
+Turn off *Start at login* in Settings first, and quit from the tray. Uninstalling never touches
+your converted files.
+
+- **Windows:** Settings → Apps → Installed apps → Rupantar → Uninstall (the uninstaller offers to
+  delete the application data). To clean up by hand, delete `%APPDATA%\app.rupantar`.
+- **macOS:** drag Rupantar from Applications to the Trash, then delete
+  `~/Library/Application Support/app.rupantar`.
+- **Linux:** `sudo apt remove rupantar` (.deb), `sudo rpm -e rupantar` (.rpm), or delete the
+  AppImage; then `rm -rf ~/.local/share/app.rupantar ~/.config/app.rupantar`.
+
+The data directory holds the packs, the log file (`logs/rupantar.log`) and the settings. Nothing
+else is written outside the app's own folders.
+
+### Something went wrong. What do I include in a bug report?
+
+Open Settings → About → **Copy debug info** and paste it into the
+[bug report](https://github.com/PersuasivePost/rupantar/issues/new?template=bug_report.yml). It is
+built on your machine, goes nowhere until you paste it, and contains versions, your OS, tool and
+pack status, your hotkey and the last 100 log lines.
 
 ## Build from source
 
