@@ -1,0 +1,39 @@
+name: Bug report
+description: Something doesn't work or converts wrongly
+labels: [bug]
+body:
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: What did you do, starting from summoning the dial? Include the file type you converted if you can.
+      placeholder: |
+        1. Press the hotkey
+        2. Drop a .docx onto the dial
+        3. Flick toward "To PDF"
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behaviour
+      description: What happened instead? Screenshots or the error text help.
+    validations:
+      required: true
+  - type: textarea
+    id: debug
+    attributes:
+      label: Debug info
+      description: |
+        In Rupantar open Settings → About → **Copy debug info** and paste it here. It lists versions, OS,
+        tools, packs, your hotkey and the last 100 log lines. It is built on your machine and only sent
+        if you paste it here; look it over first and remove anything you don't want public (file names in the log, for example).
+      render: text
+    validations:
+      required: true
