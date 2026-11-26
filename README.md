@@ -15,9 +15,13 @@ The one exception is the optional packs below, which download only after you agr
 
 ## Demo
 
-<!-- TODO: record the hotkey -> drop -> flick -> result loop and save it as docs/demo.gif, then
-     replace this comment with: ![Rupantar demo](docs/demo.gif) -->
-*Demo GIF coming soon.*
+Word → PDF
+
+![Converting a Word document to PDF from the radial menu](ss/Screencastfrom21-10-26095437AMIST-ezgif.com-video-to-gif-converter.gif)
+
+JPEG → PNG
+
+![Converting a JPEG image to PNG from the radial menu](ss/Screencastfrom21-10-26100052AMIST-ezgif.com-video-to-gif-converter.gif)
 
 ## Screenshots
 
@@ -28,11 +32,9 @@ The one exception is the optional packs below, which download only after you agr
 -->
 *Screenshots coming soon.*
 
-WORD -> PDF
-![alt text](ss/Screencastfrom21-10-26095437AMIST-ezgif.com-video-to-gif-converter.gif)
+## Roadmap
 
-JPEG -> PNG
-![alt text](ss/Screencastfrom21-10-26100052AMIST-ezgif.com-video-to-gif-converter.gif)
+See [ROADMAP.md](ROADMAP.md) for what's planned.
 
 ## Install
 
